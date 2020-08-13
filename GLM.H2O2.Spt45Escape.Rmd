@@ -1,0 +1,315 @@
+---
+title: "GLM.H2O2"
+author: "Fabian Blombach"
+date: "07/06/2019"
+output: html_document
+---
+This script describes the generation of generalised linear models for the progression of TEC-Spt4/5-Elf1 into productive transcription during oxidative stress.
+Negative binomial models were used to model count data that showed overdispersion. Raw coverage of Elf1 in the TU body region was modelled. The normalisation against the chromatin input was built into the model by including an offest term with raw chromatin input coverage.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+data <- read.delim("data/data.h2o2.txt", header=T)
+TSS <- "genome_data/TSS.uniqueTFBvTFEbOccup.TU500.intTFBfilt.H2O2.bed"
+TSSbed <- read.table(TSS)
+TSSbed$V4 <- as.character(TSSbed$V4)
+nrows <- nrow (TSSbed)
+
+#data available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141286
+#path to directory where data are stored
+mydir<-("../GSE141290/")
+
+Inp1 <- paste0(mydir, "GSM4192714_input.H2O2_r1.Coverage.bw")
+Inp2 <- paste0(mydir, "GSM4192715_input.H2O2_r2.Coverage.bw")
+Spt45_r1 <- paste0(mydir, "GSM4192702_Spt45.H2O2_r1.Coverage.bw")
+Spt45_r2 <- paste0(mydir, "GSM4192703_Spt45.H2O2_r2.Coverage.bw")
+
+Sys.setenv(TSS = TSS, nrows = nrows, Inp1 = Inp1, Inp2 = Inp2, Spt45_r1 = Spt45_r1, Spt45_r2 = Spt45_r2)
+
+require(seqinr)
+require(MASS)
+require(car)
+require(pscl)
+require(ggplot2)
+```
+
+
+```{bash}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+if [ -d temp ]; then rm -Rf temp; fi
+mkdir temp
+bedtools slop -i $TSS -g  genome_data/NC_002754.sizes -s -l 3 -r 3 > temp/slop.bed
+
+bedtools getfasta -nameOnly -s -bed temp/slop.bed -fi genome_data/NC_002754.fna -fo temp/DNA.fasta
+```
+
+```{r deltaG}
+#Temperature in Kelvin
+temp=349.15
+#Salt concentration in molar
+salt= 0.025
+
+#load reference values from SantaLucia Jr paper (PNAS 1998)
+NN<-read.table("data/NN_thermodynamics.txt", header=T, sep="\t")
+NN$ΔH<-as.numeric(as.character(NN$deltaH))
+NN$ΔS<-as.numeric(as.character(NN$deltaS))
+#delH is in kcal/mol, while delS is in cal/mol*k, calculate the delG in kcal/mol
+NN$ΔG <- NN$ΔH - (NN$ΔS*temp/1000)
+
+#load alignment of promoter sequences (output from bedtools getfasta -tab)
+input<-read.fasta("temp/DNA.fasta", forceDNAtolower=T)
+mono<-as.data.frame(matrix(unlist(input), nrow=length(input), byrow=T), row.names=names(input))
+row.names(mono)<-gsub('(+)',"",row.names(mono), fixed=T)
+row.names(mono)<-gsub('(-)',"",row.names(mono), fixed=T)
+# loop to make table with dinucleotides
+dinuc<-matrix(rep("N", times=nrow(mono)*(ncol(mono)-1)), nrow=nrow(mono))
+for (j in 1:nrow(mono)) {
+  for (i in 1:(ncol(mono)-1)) { 
+  dinuc[j,i] <- paste0(mono[j,i], mono[j,i+1]) 
+  } 
+}
+# replace dinucleotides with corresponding deltaG values
+dinucG<-dinuc
+for (k in 1:16) {
+dinucG[dinucG == NN[k,1]]<- NN[k,4]
+}
+dinucG<-data.frame(matrix(as.numeric(dinucG), ncol=ncol(dinuc)))
+
+
+# replace monocleotides with corresponding deltaG values for terminal nucleotides
+monoG<-as.matrix(mono, nrow=nrow(mono))
+for (k in 17:20) {
+  monoG[monoG == NN[k,1]]<- NN[k,4]
+}
+monoG<-data.frame(matrix(as.numeric(monoG), ncol=ncol(monoG)))
+
+#Calculate G for -3 ot +4 width = 7 by summing up dinucleotide G values
+width = 7
+deltaG <- rowSums(dinucG[,1:6]) - 0.114*(width-1)*log(salt) 
+```
+
+
+calculate Elf1Bd and input occupancy for linear modelling
+```{bash coverage_calculation}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+
+#calculate input coverage
+computeMatrix reference-point --sortRegions keep -bs 1 -a 500 -b 50  -R $TSS -S $Inp1 $Inp2 $Spt45_r1 $Spt45_r2 -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
+rm temp/trashme.npz;
+head -n 2 temp/trashme.tab > temp/Coverage.tab; 
+tail -n $nrows temp/trashme.tab >> temp/Coverage.tab; rm temp/trashme.tab
+```
+
+read matrix file and split based on samples
+```{r data_import}
+cov <- read.table(paste0("temp/Coverage.tab"), sep="\t", header=F)
+
+#calculate total coverage divided by read length as estimate of read pair coverage
+Inp1_promCov <- rowSums(cov[,1:150])/120
+Inp2_promCov <- rowSums(cov[,551:700])/120
+Spt45_r1_promCov <- rowSums(cov[,1101:1250])/120
+Spt45_r2_promCov <- rowSums(cov[,1651:1800])/120
+Inp1_bodyCov <- rowSums(cov[,301:550])/120
+Inp2_bodyCov <- rowSums(cov[,851:1100])/120
+Spt45_r1_bodyCov <- rowSums(cov[,1401:1650])/120
+Spt45_r2_bodyCov <- rowSums(cov[,1951:2200])/120
+
+covMeans<-data.frame(Inp1_promCov, Inp2_promCov, Spt45_r1_promCov, Spt45_r2_promCov, 
+                     Inp1_bodyCov, Inp2_bodyCov, Spt45_r1_bodyCov, Spt45_r2_bodyCov)
+```
+
+
+```{r data merging}
+
+dataMerged<-data.frame(deltaG, covMeans)
+row.names(dataMerged)<-row.names(mono)
+dataMerged<- merge(dataMerged, data, by.x="row.names", by.y="operon_id", sort=F)
+
+#filter out TUs with bad RNAP recruitment (SSO8620 and SSO2036)
+dataMerged <- dataMerged[!(dataMerged$Row.names %in% c("ID_1088", "ID_1368", "ID_669")),]
+
+#length final data set
+nrow(dataMerged)
+
+summary(dataMerged$deltaG)
+```
+
+```{r log_link}
+set.seed(19430102)
+#retaining relevant columns and log-transformation
+dataMerged2<-dataMerged[,c(1:10, 16:31, 45:46, 48:49)]
+dataMerged3<-dataMerged2
+for (i in 11:30){
+   x <- log(dataMerged3[,i])
+  dataMerged3[,i] <- x
+}
+
+#copying deltaG to make separate variables
+dataMerged3$ds.TSS.r1 <- - dataMerged3$deltaG
+dataMerged3$ds.TSS.r2 <- - dataMerged3$deltaG
+```
+
+##TEC escape into productive elongation (modelling of Elf1 body occupancy)
+
+Automatic model selection with step() function
+```{r automatic_selection}
+model.null.r1<- suppressWarnings(glm.nb(Spt45_r1_bodyCov ~ offset(log(Inp1_bodyCov)) + offset(spt45_r1_promoter), data=dataMerged3))
+
+#full model
+model.fl.r1 <- suppressWarnings(glm.nb(Spt45_r1_bodyCov ~ offset(log(Inp1_bodyCov)) + offset(spt45_r1_promoter) + TFB1_foldR1 + TFEb_foldR1 + ds.TSS.r1 + I(cpsf1_r1_promoter - spt45_r1_promoter), data=dataMerged3))
+
+
+model.step<-step(object=model.null.r1, scope=list(upper=model.fl.r1$call, lower=model.null.r1$call), data=dataMerged3, trace=F, direction = "forward")
+model.step$aic
+
+#trying to add single terms to starting model
+
+model.step.deltaG<-step(object=update(model.null.r1,  ~ . + ds.TSS.r1), scope=list(upper=model.fl.r1$call, lower=~1), data=dataMerged3, trace=F, direction = "forward")
+model.step.deltaG$aic
+
+model.step.tfb<-step(object=update(model.null.r1,  ~ . + TFB1_foldR1), scope=list(upper=model.fl.r1$call, lower=~1), data=dataMerged3, trace=F, direction = "forward")
+model.step.tfb$aic
+
+model.step.tfeb<-step(object=update(model.null.r1,  ~ . + TFEb_foldR1), scope=list(upper=model.fl.r1$call, lower=~1), data=dataMerged3, trace=F, direction = "forward")
+model.step.tfeb$aic
+
+model.step.cpsf1<-step(object=update(model.null.r1,  ~ . + I(cpsf1_r1_promoter - spt45_r1_promoter)), scope=list(upper=model.fl.r1$call, lower=~1), data=dataMerged3, trace=F, direction = "forward")
+model.step.cpsf1$aic
+
+
+#model with lowest AIC
+model.step$call
+model.step$coefficients
+
+#confidence intervall
+conf.table.r1 <- as.data.frame(confint(Boot(model.step,  f=coef, start=coef(model.step), R=1000, method = "case")))
+colnames(conf.table.r1) <- c("lower", "upper")
+conf.table.r1$variable <- rownames(conf.table.r1)
+conf.table.r1$coef<-coef(model.step)
+
+conf.table.r1
+#pseudo R^2
+pR2(model.step)
+```
+
+#LR tests replicate 1
+```{r LR tests replicate 1}
+#LR deltaG
+anova(model.step, update(model.step, .~. - ds.TSS.r1), test = "Chisq")$`LR stat`[2]
+#p-value deltaG
+anova(model.step, update(model.step, .~. - ds.TSS.r1), test = "Chisq")$`Pr(Chi)`[2]
+
+#LR TFB1
+anova(model.step, update(model.step, .~. - TFB1_foldR1), test = "Chisq")$`LR stat`[2]
+#p-value TFB1
+anova(model.step, update(model.step, .~. - TFB1_foldR1), test = "Chisq")$`Pr(Chi)`[2]
+
+#LR TFEb
+anova(model.step, update(model.step, .~. - TFEb_foldR1), test = "Chisq")$`LR stat`[2]
+#p-value TFEb
+anova(model.step, update(model.step, .~. - TFEb_foldR1), test = "Chisq")$`Pr(Chi)`[2]
+
+```
+
+Automatic model selection with step() function for 2nd replicate
+```{r automatic_selection_r2}
+
+model.null.r2<- suppressWarnings(glm.nb(Spt45_r2_bodyCov ~ offset(log(Inp2_bodyCov)) + offset(spt45_r2_promoter), data=dataMerged3, maxit=100))
+#full model
+model.fl.r2 <- suppressWarnings(glm.nb(Spt45_r2_bodyCov ~ offset(log(Inp2_bodyCov)) + offset(spt45_r2_promoter) + ds.TSS.r2  + TFB1_foldR2 + TFEb_foldR2 + I(cpsf1_r2_promoter-spt45_r2_promoter), data=dataMerged3, maxit=100))
+
+model.step<-suppressWarnings(step(object=model.null.r2, scope=list(upper=model.fl.r2$call, lower=model.null.r2$call), data=dataMerged3, trace=F, maxit=100, direction = "forward", k = log(nrow(dataMerged3))))
+model.step$aic
+
+#trying to add single terms to starting model
+model.step.deltaG<-step(object=update(model.null.r2,  ~ . + ds.TSS.r2), scope=list(upper=model.fl.r2$call, lower=~1), data=dataMerged3, trace=F, maxit=100, direction = "forward")
+model.step.deltaG$aic
+
+model.step.tfb<-step(object=update(model.null.r2,  ~ . + TFB1_foldR2), scope=list(upper=model.fl.r2$call, lower=~1), data=dataMerged3, trace=F, direction = "forward")
+model.step.tfb$aic
+
+model.step.tfeb<-step(object=update(model.null.r2,  ~ . + TFEb_foldR2), scope=list(upper=model.fl.r2$call, lower=~1), data=dataMerged3, trace=F, direction = "forward")
+model.step.tfeb$aic
+
+model.step.cpsf1<-step(object=update(model.null.r2,  ~ . + I(cpsf1_r2_promoter - spt45_r2_promoter)), scope=list(upper=model.fl.r2$call, lower=~1), data=dataMerged3, trace=F, maxit=100, direction = "forward")
+model.step.cpsf1$aic
+
+#model with lowest AIC
+model.step$call
+model.step$coefficients
+
+
+#confidence intervall
+conf.table.r2 <- as.data.frame(confint(Boot(model.step,  f=coef, start=coef(model.step), R=1000, method = "case")))
+colnames(conf.table.r2) <- c("lower", "upper")
+conf.table.r2$variable <- rownames(conf.table.r2)
+conf.table.r2$coef<-coef(model.step)
+
+conf.table.r2
+```
+
+#LR tests replicate 2
+```{r LR tests replicate 2}
+#LR Spt4/5
+anova(model.step.cpsf1, update(model.step.cpsf1, .~. - I(cpsf1_r2_promoter-spt45_r2_promoter)), test = "Chisq")$`LR stat`[2]
+#p-value TFB1
+anova(model.step.cpsf1, update(model.step.cpsf1, .~. - I(cpsf1_r2_promoter-spt45_r2_promoter)), test = "Chisq")$`Pr(Chi)`[2]
+
+#Note: aCPSF1 load does not improve the model significantly
+
+
+#LR deltaG
+anova(model.step, update(model.step, .~. - ds.TSS.r2), test = "Chisq")$`LR stat`[2]
+#p-value deltaG
+anova(model.step, update(model.step, .~. - ds.TSS.r2), test = "Chisq")$`Pr(Chi)`[2]
+
+#LR TFB1
+anova(model.step, update(model.step, .~. - TFB1_foldR2), test = "Chisq")$`LR stat`[2]
+#p-value TFB1
+anova(model.step, update(model.step, .~. - TFB1_foldR2), test = "Chisq")$`Pr(Chi)`[2]
+
+#LR TFEb
+anova(model.step, update(model.step, .~. - TFEb_foldR2), test = "Chisq")$`LR stat`[2]
+#p-value TFB1
+anova(model.step, update(model.step, .~. - TFEb_foldR2), test = "Chisq")$`Pr(Chi)`[2]
+
+#pseudo R^2
+pR2(model.step)
+```
+
+```{r combining table with coefficients for replicates}
+conf.table.TECescape<-data.frame(lower=rep(NA, times=8), 
+                                 upper=rep(NA, times=8), 
+                                 variable=c("TFB1_foldR1", "TFEb_foldR1", 
+                                            "I(cpsf1_r1_promoter - spt45_r1_promoter)", "ds.TSS.r1",
+                                            "TFB1_foldR2", "TFEb_foldR2", 
+                                            "I(cpsf1_r2_promoter - spt45_r2_promoter)", "ds.TSS.r2"),
+                                 coef=rep(NA, times=8))
+conf.table.TECescape$variable <- factor(conf.table.TECescape$variable, 
+                                   levels=c("TFB1_foldR1", "TFEb_foldR1", 
+                                            "I(cpsf1_r1_promoter - spt45_r1_promoter)", "ds.TSS.r1",
+                                            "TFB1_foldR2", "TFEb_foldR2", 
+                                            "I(cpsf1_r2_promoter - spt45_r2_promoter)", "ds.TSS.r2"))
+
+x<-rbind(conf.table.r1, conf.table.r2)
+for(i in 1:nrow(x)){
+j<-which(conf.table.TECescape$variable == x$variable[i])
+conf.table.TECescape[j,]<-x[i,]
+}
+
+
+#plotting model coefficients with confidence intervals
+
+p <- ggplot(conf.table.TECescape, aes(x=variable, y=coef))
+p <- p + geom_pointrange(aes(ymin = lower, ymax = upper)) + theme_gray() +
+  theme(aspect.ratio=0.75, legend.position = "none") +
+  scale_y_continuous(limits=c(-1.2,1.2), breaks = c(-2,-1,0,1,2), expand = c(0, 0)) +
+  geom_hline(yintercept=0)
+p
+ggplot2::ggsave("coef.TECescape.glm.h2o2.pdf", plot = p, device = "pdf", path = NULL,
+       scale = 1, width = 60, height = 45, units = c("mm"), limitsize = TRUE)
+```
+
+
+
+
