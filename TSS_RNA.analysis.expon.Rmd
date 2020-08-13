@@ -1,0 +1,557 @@
+---
+title: "TSS_RNA.correlation"
+author: "Fabian Blombach"
+date: "17/12/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+data <- read.delim("data/data.expon.txt", header=T)
+phase<-"expon"
+
+#alternative TSS sets to work with
+TSS <- "genome_data/TSSvATG.uniqueTFBvTFEbOccup.TU100.intTFBfilt.expon.bed"
+TSSbed <- read.table(TSS)
+TSSbed$V4 <- as.character(TSSbed$V4)
+nrows <- nrow (TSSbed)
+data.TSS<-subset(data, operon_id %in% TSSbed$V4)
+data.TSS<-data.TSS[match(TSSbed$V4, data.TSS$operon_id),]
+
+lowEI <- data$operon_id[data$EI_RNAPmean < -2.5]
+intermEI <- data$operon_id[data$EI_RNAPmean <= -1 & data$EI_RNAPmean >= -2.5]
+highEI <- data$operon_id[data$EI_RNAPmean > -1]
+
+RNA<-read.delim("data/NC_002754_transcripts.txt")
+#TU definition from Wurtzel et al (2009) Genome Research
+TUs<-read.delim("genome_data/Wurtzel_allTUs.txt")
+TUs$operon_ID<-paste0("ID_", TUs$operon_ID)
+
+require(RVAideMemoire)
+require(ggplot2)
+require(Rsamtools)
+require(ggplot2)
+require(Biostrings)
+require(MASS)
+require(car)
+require(dplyr)
+require(GenomicRanges)
+require(coxed)
+
+#data available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141286
+#path to directory where data are stored
+mydir<-("../GSE141290/")
+
+bf<-BamFile(paste0(mydir, "GSM4715015_expon.cappable.sRNA.repl1.bam"))
+bf2<-BamFile(paste0(mydir, "GSM4715016_expon.cappable.sRNA.repl2.bam"))
+cpsf1_r1 <- paste0(mydir, "GSM4200375_CPSF1_expon_r1.normRatio.bw")
+cpsf1_r2 <- paste0(mydir, "GSM4200376_CPSF1_expon_r2.normRatio.bw")
+spt45_r1 <- paste0(mydir, "GSM4200371_Spt45_expon_r1.normRatio.bw")
+spt45_r2 <- paste0(mydir, "GSM4200372_Spt45_expon_r2.normRatio.bw")
+elf1_r1 <- paste0(mydir, "GSM4200373_Elf1_expon_r1.normRatio.bw")
+elf1_r2 <- paste0(mydir, "GSM4200374_Elf1_expon_r2.normRatio.bw")
+rnap_r1 <- paste0(mydir, "GSM4200369_Rpo47_expon_r1.normRatio.bw")
+rnap_r2 <- paste0(mydir, "GSM4200370_Rpo47_expon_r2.normRatio.bw")
+
+
+genomeFasta <- "genome_data/NC_002754.fna"
+genomeSizes <- "genome_data/NC_002754.sizes"
+
+Sys.setenv(TSS = TSS, nrows = nrows, cpsf1_r1 = cpsf1_r1, cpsf1_r2 = cpsf1_r2, spt45_r1 = spt45_r1, spt45_r2 = spt45_r2, elf1_r1 = elf1_r1, elf1_r2 = elf1_r2, rnap_r1 = rnap_r1, rnap_r2 = rnap_r2, genomeFasta = genomeFasta, genomeSizes = genomeSizes)
+```
+
+Link TSSs to RNA-seq data
+```{r transcriptome}
+RNAfilt<-data.frame(matrix(nrow=nrow(TSSbed), ncol=ncol(RNA)))
+for (i in 1:nrow(TSSbed)){
+if(TSSbed$V6[i]=="+"){j<-which(RNA$Translation.Start - TSSbed$V3[i]== 
+                                min(RNA[RNA$Translation.Start - TSSbed$V3[i]>=0,]$Translation.Start - TSSbed$V3[i], na.rm=T))
+                      k<-which(RNA$Transcription.Start - TSSbed$V3[i]== 
+                                min(RNA[RNA$Transcription.Start - TSSbed$V3[i]>=0,]$Transcription.Start - TSSbed$V3[i], na.rm=T))
+                      if(j <= k){RNAfilt[i,] <- RNA[j,]} else {RNAfilt[i,] <- NA}}
+if(TSSbed$V6[i]=="-"){j<-which(RNA$Translation.Start - TSSbed$V3[i]== 
+                                max(RNA[RNA$Translation.Start - TSSbed$V3[i]<=0,]$Translation.Start - TSSbed$V3[i], na.rm=T))
+                      k<-which(RNA$Transcription.Start - TSSbed$V3[i]== 
+                                max(RNA[RNA$Transcription.Start - TSSbed$V3[i]<=0,]$Transcription.Start - TSSbed$V3[i], na.rm=T))
+                      if(j >= k){RNAfilt[i,] <- RNA[j,]} else {RNAfilt[i,] <- NA}}
+}
+colnames(RNAfilt)<-colnames(RNA)
+
+#filtering ncRNA not included in RNA-seq
+TU.sel <- TUs[TUs$operon_ID %in% TSSbed$V4,]
+ncRNA<-TU.sel[union(grep('SSOt', TU.sel$Locus), grep('SSOr', TU.sel$Locus)),]
+coding<-!(TSSbed$V4 %in% ncRNA$operon_ID)
+
+RNA.merge<- cbind(TSSbed, RNAfilt[,6:34])
+RNA.merge[!coding,] <- NA
+
+
+#check result
+table(is.na(RNA.merge$Expression.expon[coding]))
+```
+
+
+
+
+
+###REALLY?
+
+
+
+
+
+#To filter out repetitive regions where TSS-RNAs cannot be mapped, the first 20 nt are tested for uniqueness, i.e. mappability
+```{bash Sequence_of_initial_20nt}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+if [ -d temp ]; then rm -Rf temp; fi
+mkdir temp
+
+bedtools slop -s -r 19 -l 0 -i $TSS -g $genomeSizes > temp/TSSbed.slop.bed
+bedtools getfasta -s -fi $genomeFasta -bed temp/TSSbed.slop.bed -fo temp/First20.fasta
+```
+
+```{r check_mappability_of_first_20nt}
+forSeq <- readDNAStringSet("temp/First20.fasta")
+revSeq <- reverseComplement(forSeq)
+genome <- readDNAStringSet(genomeFasta)
+forCount<-countPDict(forSeq,genome[[1]], max.mismatch=0, with.indels=F)
+revCount<-countPDict(revSeq,genome[[1]], max.mismatch=0, with.indels=F)
+allCount<-forCount+revCount
+table(allCount)
+filtMap<- allCount == 1
+```
+
+
+#Prepare ChIP-seq data
+```{bash calculate_occupancyProfiles}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+#calculate coverage normalised to input
+computeMatrix reference-point --sortRegions keep -bs 1 -a 150 -b 50 -R $TSS -S $spt45_r1 $spt45_r2 $elf1_r1 $elf1_r2 $cpsf1_r1 $cpsf1_r2 $rnap_r1 $rnap_r2 -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
+rm temp/trashme.npz;
+head -n 2 temp/trashme.tab > temp/coverage.tab; 
+tail -n $nrows temp/trashme.tab >> temp/coverage.tab; rm temp/trashme.tab;
+```
+
+```{r Calculate_CPSF1_peakMaxima}
+x<-read.table("temp/coverage.tab")
+x[is.na(x)]<-0
+r1M_spt45<-as.matrix(x[,1:200])
+r2M_spt45<-as.matrix(x[,201:400])
+r1M_elf1<-as.matrix(x[,401:600])
+r2M_elf1<-as.matrix(x[,601:800])
+r1M_cpsf<-as.matrix(x[,801:1000])
+r2M_cpsf<-as.matrix(x[,1001:1200])
+r1M_rnap<-as.matrix(x[,1201:1400])
+r2M_rnap<-as.matrix(x[,1401:1600])
+
+#calculate promoter occupancy and geometric mean
+cpsf_pr1<-rowMeans(r1M_cpsf)
+cpsf_pr2<-rowMeans(r2M_cpsf)
+cpsf_prM<-sqrt(cpsf_pr1*cpsf_pr2)
+spt45_pr1<-rowMeans(r1M_spt45)
+spt45_pr2<-rowMeans(r2M_spt45)
+spt45_prM<-sqrt(spt45_pr1*spt45_pr2)
+elf1_pr1<-rowMeans(r1M_elf1)
+elf1_pr2<-rowMeans(r2M_elf1)
+elf1_prM<-sqrt(elf1_pr1*elf1_pr2)
+rnap_pr1<-rowMeans(r1M_rnap)
+rnap_pr2<-rowMeans(r2M_rnap)
+rnap_prM<-sqrt(rnap_pr1*rnap_pr2)
+
+
+rm(r1M_cpsf, r2M_cpsf, r1M_spt45, r2M_spt45, r1M_elf1, r2M_elf1)
+```
+
+#Prepare TSS-RNA data
+```{r importing_reads}
+# nucleotide name is imported from bam file (bf)
+# specify range around estimated TSS, 200 bp interval, plusmin 100 bp around TSS
+sz <- 100
+gr <- GRanges(TSSbed[1,1],IRanges(ifelse(TSSbed$V6 == "+", TSSbed$V3-sz, TSSbed$V3-sz+1),ifelse(TSSbed$V6 == "+", TSSbed$V2+sz-1, TSSbed$V2+sz)))
+
+reads <- scanBam(bf, param=ScanBamParam(what=c("pos","strand", "qwidth", "seq"), reverseComplement=T, which=gr))
+reads2 <- scanBam(bf2, param=ScanBamParam(what=c("pos","strand", "qwidth", "seq"), reverseComplement=T, which=gr))
+```
+
+```{r splitting sense and antisense signal}
+readsSense <- list()
+readsAntisense <- list()
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      positions<-reads[[i]]$strand == j
+      x<-data.frame(pos=reads[[i]]$pos, qwidth=reads[[i]]$qwidth , strand=reads[[i]]$strand, sequence=reads[[i]]$seq)
+      readsSense[[i]]<-x[positions,]
+      readsAntisense[[i]]<-x[!positions,]
+}
+#rep2
+readsSense2 <- list()
+readsAntisense2 <- list()
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      positions<-reads2[[i]]$strand == j
+      x<-data.frame(pos=reads2[[i]]$pos, qwidth=reads2[[i]]$qwidth , strand=reads2[[i]]$strand,  sequence=reads2[[i]]$seq)
+      readsSense2[[i]]<-x[positions,]
+      readsAntisense2[[i]]<-x[!positions,]
+    }  
+```
+
+Assigning start coordinate of reads relative to predicted TSS (i.e. 5' for reads on +strand, 3' for reads on -strand)
+```{r assign_pos_rel_to_TSS}
+ 
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      k <- as.numeric(TSSbed[i,3])
+      if(j == "+") relpos<-readsSense[[i]]$pos -k +sz +1
+      if(j == "-") relpos<-readsSense[[i]]$pos*(-1) +k +sz +1
+      readsSense[[i]]$rel_pos<-relpos
+}  
+
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      k <- as.numeric(TSSbed[i,3])
+      if(j == "-") relpos<-readsAntisense[[i]]$pos -k +sz +1
+      if(j == "+") relpos<-readsAntisense[[i]]$pos*(-1) +k +sz +1
+      readsAntisense[[i]]$rel_pos<-relpos
+}  
+
+#rep2
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      k <- as.numeric(TSSbed[i,3])
+      if(j == "+") relpos<-readsSense2[[i]]$pos -k +sz +1
+      if(j == "-") relpos<-readsSense2[[i]]$pos*(-1) +k +sz +1
+      readsSense2[[i]]$rel_pos<-relpos
+}  
+
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      k <- as.numeric(TSSbed[i,3])
+      if(j == "-") relpos<-readsAntisense2[[i]]$pos -k +sz +1
+      if(j == "+") relpos<-readsAntisense2[[i]]$pos*(-1) +k +sz +1
+      readsAntisense2[[i]]$rel_pos<-relpos
+}  
+```
+
+Calculate the position of 5'-ends for all reads relative to TSS
+```{r calculate5primePos}
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "+") readsSense[[i]]$fiveprime <-readsSense[[i]]$rel_pos
+      if(j == "-") {fiveprime <- readsSense[[i]]$rel_pos - readsSense[[i]]$qwidth +1
+        readsSense[[i]]$fiveprime <-fiveprime
+      }
+}
+
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "-") readsAntisense[[i]]$fiveprime <-readsAntisense[[i]]$rel_pos
+      if(j == "+") {fiveprime <- readsAntisense[[i]]$rel_pos - readsAntisense[[i]]$qwidth +1
+        readsAntisense[[i]]$fiveprime <-fiveprime
+      }
+}
+
+#rep2
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "+") readsSense2[[i]]$fiveprime <-readsSense2[[i]]$rel_pos
+      if(j == "-") {fiveprime <- readsSense2[[i]]$rel_pos - readsSense2[[i]]$qwidth +1
+        readsSense2[[i]]$fiveprime <-fiveprime
+      }
+}
+
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "-") readsAntisense2[[i]]$fiveprime <-readsAntisense2[[i]]$rel_pos
+      if(j == "+") {fiveprime <- readsAntisense2[[i]]$rel_pos - readsAntisense2[[i]]$qwidth +1
+        readsAntisense2[[i]]$fiveprime <-fiveprime
+      }
+}
+```
+
+Calculate the position of 3'-ends for all reads relative to TSS
+```{r calculate3primePos}
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "-") readsSense[[i]]$threeprime <-readsSense[[i]]$rel_pos
+      if(j == "+") {threeprime <- readsSense[[i]]$rel_pos + readsSense[[i]]$qwidth -1
+        readsSense[[i]]$threeprime <-threeprime
+      }
+}
+
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "+") readsAntisense[[i]]$threeprime <-readsAntisense[[i]]$rel_pos
+      if(j == "-") {threeprime <- readsAntisense[[i]]$rel_pos + readsAntisense[[i]]$qwidth -1
+        readsAntisense[[i]]$threeprime <-threeprime
+      }
+}
+
+#rep2
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "-") readsSense2[[i]]$threeprime <-readsSense2[[i]]$rel_pos
+      if(j == "+") {threeprime <- readsSense2[[i]]$rel_pos + readsSense2[[i]]$qwidth -1
+        readsSense2[[i]]$threeprime <-threeprime
+      }
+}
+
+for(i in 1:nrow(TSSbed)) {
+      j <- as.character(TSSbed[i,6])
+      if(j == "+") readsAntisense2[[i]]$threeprime <-readsAntisense2[[i]]$rel_pos
+      if(j == "-") {threeprime <- readsAntisense2[[i]]$rel_pos + readsAntisense2[[i]]$qwidth -1
+        readsAntisense2[[i]]$threeprime <-threeprime
+      }
+}
+```
+
+#Correlation of TSS-RNA read counts with ChIP-seq occupancy
+```{r 5prime-ends_at_TSS_optimisation}
+#Correlation with ChIP-seq data is calculated for different threshold for minimum and maximum read length using a sliding window
+
+#define sliding window size
+ws<-20
+FiveprimeCountCorrel<-data.frame(cutoff=vector(), spt45_cor=vector(), elf1_cor=vector(), cpsf_cor=vector(), rnaseq_cor=vector())
+for(x in 30:70){
+fivePrimeCount <- vector()
+for(i in 1:nrow(TSSbed)){
+  filt <- readsSense[[i]]$fiveprime >95 & readsSense[[i]]$fiveprime <= 106 & readsSense[[i]]$qwidth <= x &readsSense[[i]]$qwidth > x-ws
+  d <- table(filt)["TRUE"]
+fivePrimeCount[i] <- d
+}
+superfilt<- filtMap & coding
+y <- suppressWarnings(cor.test(fivePrimeCount[superfilt], spt45_prM[superfilt], method="spearman"))$estimate
+y0 <- suppressWarnings(cor.test(fivePrimeCount[superfilt], elf1_prM[superfilt], method="spearman"))$estimate
+y1 <- suppressWarnings(cor.test(fivePrimeCount[superfilt], cpsf_prM[superfilt], method="spearman"))$estimate
+y2 <- suppressWarnings(cor.test(fivePrimeCount[superfilt], RNA.merge$Expression.expon[superfilt], method="spearman"))$estimate
+
+FiveprimeCountCorrel[x-29,]$cutoff<-x
+FiveprimeCountCorrel[x-29,]$spt45_cor<- y
+FiveprimeCountCorrel[x-29,]$elf1_cor<- y0
+FiveprimeCountCorrel[x-29,]$cpsf_cor<- y1
+FiveprimeCountCorrel[x-29,]$rnaseq_cor<- y2
+}
+
+g <- ggplot(data=FiveprimeCountCorrel, aes(x=cutoff, y=spt45_cor, colour="#453781")) + geom_line(size=1)
+g <- g + geom_line(data=FiveprimeCountCorrel, aes(x=cutoff, y=elf1_cor, colour="#C05F98"), size=1)
+g <- g + geom_line(data=FiveprimeCountCorrel, aes(x=cutoff, y=cpsf_cor, colour="#664b4b"), size=1)
+g <- g + geom_line(data=FiveprimeCountCorrel, aes(x=cutoff, y=rnaseq_cor, colour="black"), size=1)
+g + ylab("spearman's r") + ylim(0,0.75) + scale_colour_manual(guide = 'legend', name="correlated to", values =c("#453781"="#453781","#C05F98"="#C05F98", "black"="black", "#664b4b"="#664b4b"), labels = c("#453781"='Spt4/5', "#C05F98"='Elf1', "#664b4b"='aCPSF1', "black"='RNA-seq')) 
+
+
+#repl2
+FiveprimeCountCorrel2<-data.frame(cutoff=vector(), spt45_cor=vector(), elf1_cor=vector(), cpsf_cor=vector(), rnaseq_cor=vector())
+for(x in 30:70){
+fivePrimeCount <- vector()
+for(i in 1:nrow(TSSbed)){
+  filt <- readsSense2[[i]]$fiveprime >95 & readsSense2[[i]]$fiveprime <= 106 & readsSense2[[i]]$qwidth <= x &readsSense2[[i]]$qwidth > x-ws
+  d <- table(filt)["TRUE"]
+fivePrimeCount[i] <- d
+}
+superfilt<- filtMap & coding
+y <- suppressWarnings(cor.test(fivePrimeCount[superfilt], spt45_prM[superfilt], method="spearman"))$estimate
+y0 <- suppressWarnings(cor.test(fivePrimeCount[superfilt], elf1_prM[superfilt], method="spearman"))$estimate
+y1 <- suppressWarnings(cor.test(fivePrimeCount[superfilt], cpsf_prM[superfilt], method="spearman"))$estimate
+y2 <- suppressWarnings(cor.test(fivePrimeCount[superfilt], RNA.merge$Expression.expon[superfilt], method="spearman"))$estimate
+
+FiveprimeCountCorrel2[x-29,]$cutoff<-x
+FiveprimeCountCorrel2[x-29,]$spt45_cor<- y
+FiveprimeCountCorrel2[x-29,]$elf1_cor<- y0
+FiveprimeCountCorrel2[x-29,]$cpsf_cor<- y1
+FiveprimeCountCorrel2[x-29,]$rnaseq_cor<- y2
+}
+
+
+
+g2 <- ggplot(data=FiveprimeCountCorrel2, aes(x=cutoff, y=spt45_cor, colour="#453781")) + geom_line(size=1)
+g2 <- g2 + geom_line(data=FiveprimeCountCorrel2, aes(x=cutoff, y=elf1_cor, colour="#C05F98"), size=1)
+g2 <- g2 + geom_line(data=FiveprimeCountCorrel2, aes(x=cutoff, y=cpsf_cor, colour="#664b4b"), size=1)
+g2 <- g2 + geom_line(data=FiveprimeCountCorrel2, aes(x=cutoff, y=rnaseq_cor, colour="black"), size=1)
+g2 + ylab("spearman's r") + ylim(0,0.75) + scale_colour_manual(guide = 'legend', name="correlated to", values =c("#453781"="#453781","#C05F98"="#C05F98", "#664b4b"="#664b4b", "black"="black"), labels = c("#453781"='Spt4/5', "#C05F98"='Elf1', "#664b4b"='aCPSF1', "black"='RNA-seq')) 
+
+```
+
+
+
+
+
+```{r counting 5prime-ends_at_TSS}
+#upper cutoff and window size
+x<- 71
+ws<- 52
+
+fivePrimeCount <- vector()
+for(i in 1:nrow(TSSbed)){
+  filt <- readsSense[[i]]$fiveprime >80 & readsSense[[i]]$fiveprime <= 121 & readsSense[[i]]$qwidth <= x &readsSense[[i]]$qwidth > x-ws
+  d <- table(filt)["TRUE"]
+fivePrimeCount[i] <- d
+}
+fivePrimeCount[is.na(fivePrimeCount)] <- 0
+
+#rep2
+fivePrimeCount2 <- vector()
+for(i in 1:nrow(TSSbed)){
+  filt <- readsSense2[[i]]$fiveprime >80 & readsSense2[[i]]$fiveprime <= 121 & readsSense2[[i]]$qwidth <= x &readsSense2[[i]]$qwidth > x-ws
+  d <- table(filt)["TRUE"]
+fivePrimeCount2[i] <- d
+}
+fivePrimeCount2[is.na(fivePrimeCount2)] <- 0
+
+cor.df <- data.frame(fivePrimeCountR1 = fivePrimeCount[filtMap&coding], 
+                     fivePrimeCountR2 = fivePrimeCount2[filtMap&coding], 
+                     fivePrimeCountGM = sqrt(fivePrimeCount[filtMap&coding]*fivePrimeCount2[filtMap&coding]),
+                     rnap = rnap_prM[filtMap&coding], 
+                     spt45 = spt45_prM[filtMap&coding],  
+                     cpsf1 =  cpsf_prM[filtMap&coding], 
+                     rnaSeq = RNA.merge$Expression.expon[filtMap&coding], 
+                     operon_ID = TSSbed$V4[filtMap&coding])
+
+#correlation between replicates
+cor.test(cor.df$fivePrimeCountR1, cor.df$fivePrimeCountR2)
+cor.test(cor.df$fivePrimeCountR1, cor.df$fivePrimeCountR2, method ="s")
+#bootstrap correlation difference TSS RNA to Spt4/5 and RNA-seq
+difference<-vector()
+for(i in 1:10000){
+bt <- sample(1:nrow(cor.df), size = nrow(cor.df), replace = T) 
+cor.df.bt<-cor.df[bt,]
+x <- cor(cor.df.bt$spt45, cor.df.bt$fivePrimeCountGM, method="s")
+y <- cor(cor.df.bt$rnaSeq, cor.df.bt$fivePrimeCountGM, method="s")
+difference[i]<-x - y
+}
+bca(difference, conf.level = 0.999)
+
+#data.frame to highlight selected TUs
+cor.df.lab<-cor.df[cor.df$operon_ID %in% c("ID_207", "ID_2044"),]
+
+cor.dfEI<-cor.df[cor.df$operon_ID %in% data$operon_id,]
+
+theme_set(theme_bw(base_size = 8))
+g_spt45<-ggplot(data = cor.df, aes(x= log(spt45,2), y = log(fivePrimeCountGM,2))) + geom_point(cex=0.2) +
+   xlab("Spt4/5 Pr") + ylab("TSS RNA count") + 
+  geom_point(data = cor.df.lab, aes(x= log(spt45,2), y = log(fivePrimeCountGM,2)),cex=0.2, colour="red") +
+  scale_y_continuous(limits=c(-0.5, 20.5), breaks=seq(0, 20, by = 4), expand = c(0, 0)) +
+  scale_x_continuous(limits=c(-0.5, 6.5), breaks=seq(0, 6, by = 2), expand = c(0, 0)) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) 
+g_spt45
+
+g_rnap<-ggplot(data = cor.df, aes(x= log(rnap,2), y = log(fivePrimeCountGM,2))) + geom_point(cex=0.2) +
+   xlab("RNAP Pr") + ylab("TSS RNA count") + 
+  geom_point(data = cor.df.lab, aes(x= log(rnap,2), y = log(fivePrimeCountGM,2)),cex=0.2, colour="red") +
+  scale_y_continuous(limits=c(-0.5, 20.5), breaks=seq(0, 20, by = 4), expand = c(0, 0)) +
+  scale_x_continuous(limits=c(-0.5, 6.5), breaks=seq(0, 6, by = 2), expand = c(0, 0)) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) 
+g_rnap
+
+g_cpsf<-ggplot(data = cor.df, aes(x= log(cpsf1,2), y = log(fivePrimeCountGM,2))) + geom_point(cex=0.2) +
+   xlab("CPSF Pr") + ylab("TSS RNA count") + 
+  geom_point(data = cor.df.lab, aes(x= log(cpsf1,2), y = log(fivePrimeCountGM,2)),cex=0.2, colour="red") +
+  scale_y_continuous(limits=c(-0.5, 20.5), breaks=seq(0, 20, by = 4), expand = c(0, 0)) +
+  scale_x_continuous(limits=c(-0.5, 6.5), breaks=seq(0, 6, by = 2), expand = c(0, 0)) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) 
+g_cpsf
+
+g_rnaSeq<-ggplot(data = cor.df, aes(x= log(rnaSeq,10), y = log(fivePrimeCountGM,2))) + geom_point(cex=0.2) +
+   xlab("RNA-seq") + ylab("TSS RNA count") + 
+  geom_point(data = cor.df.lab, aes(x= log(rnaSeq,10), y = log(fivePrimeCountGM,2)),cex=0.2, colour="red") +
+  scale_y_continuous(limits=c(-0.5, 20.5), breaks=seq(0, 20, by = 4), expand = c(0, 0)) +
+  scale_x_continuous(limits=c(0, 5), breaks=seq(-1, 5, by = 1), expand = c(0, 0)) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) 
+g_rnaSeq
+
+
+suppressWarnings(cor.test(formula = ~ fivePrimeCountGM + spt45, data=cor.df, method="spearman"))$estimate
+suppressWarnings(cor.test(formula = ~ fivePrimeCountGM + cpsf1, data=cor.df, method="spearman"))$estimate
+suppressWarnings(cor.test(formula = ~ fivePrimeCountGM + rnaSeq, data=cor.df, method="spearman"))$estimate
+
+spearman.ci(cor.df$fivePrimeCountGM, cor.df$spt45)
+spearman.ci(cor.df$fivePrimeCountGM, cor.df$rnap)
+spearman.ci(cor.df$fivePrimeCountGM, cor.df$cpsf1)
+spearman.ci(cor.df$fivePrimeCountGM, cor.df$rnaSeq)
+
+
+ggplot2::ggsave(paste0("scatter.TSS-RNA.spt45.", phase, ".GM.pdf"), plot = g_spt45, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+ggplot2::ggsave(paste0("scatter.TSS-RNA.rnap.", phase, ".GM.pdf"), plot = g_rnap, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+ggplot2::ggsave(paste0("scatter.TSS-RNA.cpsf1.", phase, ".GM.pdf"), plot = g_cpsf, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+ggplot2::ggsave(paste0("scatter.TSS-RNA.rna-seq.", phase, ".GM.pdf"), plot = g_rnaSeq, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+```
+
+
+
+```{r boxplots_fraction}
+#cutoff x nt
+x<-50
+
+#minimal read cound
+minReadCount <- 10
+
+fracL<-vector(length = nrow(TSSbed))
+for(i in 1:nrow(TSSbed)) {
+  filt <- readsSense[[i]]$fiveprime >80 & readsSense[[i]]$fiveprime <= 121
+  filtL<- readsSense[[i]]$qwidth < x
+  d<-sum(filt)
+  dL<-sum(filtL&filt)
+  fracL[i]<- if(is.na(d)==F & d >= minReadCount) {dL/d} else {NA} 
+}
+
+fracL2<-vector(length = nrow(TSSbed))
+for(i in 1:nrow(TSSbed)) {
+  filt <- readsSense2[[i]]$fiveprime >80 & readsSense2[[i]]$fiveprime <= 121
+  filtL<- readsSense2[[i]]$qwidth < x
+  d<-sum(filt)
+  dL<-sum(filtL&filt)
+  dL<-sum(filtL&filt)
+  fracL2[i]<- if(is.na(d)==F & d >= minReadCount) {dL/d} else {NA} 
+}
+
+#data filtering
+filtFr <- coding & filtMap
+fracLf <- ((fracL+fracL2)/2)[filtFr]
+
+#link with escape
+cut.escape<-cut(data.TSS$EI_RNAPmean, breaks=c(-10, -2.5, -1, 4), labels=c("low", "interm", "high"))
+cut.escapef <- cut.escape[filtFr]
+
+fracL.lowEI <- fracLf[cut.escapef == "low" & is.na(cut.escapef) ==F]
+fracL.intermEI <- fracLf[cut.escapef == "interm" & is.na(cut.escapef) ==F]
+fracL.highEI <- fracLf[cut.escapef == "high" & is.na(cut.escapef) ==F]
+
+
+cor.test(fracLf, data.TSS$EI_RNAPmean[filtFr], method="spearman")
+plot(fracLf, data.TSS$EI_RNAPmean[filtFr], pch=19)
+
+#data.frame for long format
+frac.df <- data.frame(smallReadFraction = fracLf,  EI = cut.escapef)
+#filtering out TUs below minimal read count
+frac.df <- frac.df %>% filter(is.na(smallReadFraction)==F) 
+
+
+#for escpae
+plotbox2<-ggplot(frac.df, aes(EI, smallReadFraction)) +
+      geom_boxplot(outlier.size=0.2, notch=T) + ylab(paste("Fraction of reads <=", x,  "nt")) + xlab("")+
+  scale_y_continuous(limits=c(0, 1),breaks=seq(0, 1, by=0.2), expand = c(0, 0)) +
+  scale_x_discrete(na.translate = FALSE) +
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+              legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+              panel.border  = element_rect(colour = "black", size = 0.5))
+plotbox2
+ggsave(paste0("boxplot.EI_fractSmallReads.", x,"nt_cutoff", phase, ".pdf"), plot = plotbox2, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+
+wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "interm" | frac.df$EI == "low",], alternative="greater")
+wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "high" | frac.df$EI == "low",], alternative="greater")
+wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "interm" | frac.df$EI == "high",], alternative="greater")
+
+```
+
+
