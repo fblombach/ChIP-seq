@@ -1,0 +1,368 @@
+---
+title: "EI_comparison"
+author: "Fabian Blombach"
+date: "13/05/2019"
+output: html_document
+---
+This script compares EI data between different growth phases
+```{r setup, include=FALSE}
+theme_set(theme_bw(base_size = 8))
+
+knitr::opts_chunk$set(echo = TRUE)
+expon <- read.delim("data/data.expon.txt", header=T)
+stat  <- read.delim("data/data.stat.txt", header=T)
+h2o2  <- read.delim("data/data.h2o2.txt", header=T)
+
+require(ggplot2)
+require(colorspace)
+```
+
+make data frames combining EI data
+```{r}
+expstat<-merge(expon[,c(1,11,13,19,21,23:31,36:37,39:40, 49, 55, 63)], stat[,c(1,11,13,19,21,23:31,36:37,39:40)], by.x="operon_id", by.y="operon_id", sort=F)
+exph2o2<-merge(expon[,c(1,11,13,19,21,23:31,36:37,39:40, 49, 55, 63)], h2o2[,c(1,11,13,19,21,23:31,36:37,39:40)], by.x="operon_id", by.y="operon_id", sort=F)
+
+print(nrow(expstat))
+print(nrow(exph2o2))
+```
+make pairwise comparison between replicates
+
+```{r}
+#for RNAP EI comparison with h2o2 data
+p11<-wilcox.test(exph2o2$EI_RNAP1.x, exph2o2$EI_RNAP1.y, paired=T, alternative = "greater")
+p12<-wilcox.test(exph2o2$EI_RNAP1.x, exph2o2$EI_RNAP2.y, paired=T, alternative = "greater")
+p21<-wilcox.test(exph2o2$EI_RNAP2.x, exph2o2$EI_RNAP1.y, paired=T, alternative = "greater")
+p22<-wilcox.test(exph2o2$EI_RNAP2.x, exph2o2$EI_RNAP2.y, paired=T, alternative = "greater")
+max(p11$p.value, p12$p.value, p21$p.value, p22$p.value)
+
+#for RNAP EI comparison with stat data
+p11<-wilcox.test(expstat$EI_RNAP1.x, expstat$EI_RNAP1.y, paired=T, alternative = "greater")
+p12<-wilcox.test(expstat$EI_RNAP1.x, expstat$EI_RNAP2.y, paired=T, alternative = "greater")
+p21<-wilcox.test(expstat$EI_RNAP2.x, expstat$EI_RNAP1.y, paired=T, alternative = "greater")
+p22<-wilcox.test(expstat$EI_RNAP2.x, expstat$EI_RNAP2.y, paired=T, alternative = "greater")
+max(p11$p.value, p12$p.value, p21$p.value, p22$p.value)
+
+#for EI Spt4/5 comparison with h2o2 data
+p11<-wilcox.test(exph2o2$EI_spt45_r1.x, exph2o2$EI_spt45_r1.y, paired=T, alternative = "greater")
+p12<-wilcox.test(exph2o2$EI_spt45_r1.x, exph2o2$EI_spt45_r2.y, paired=T, alternative = "greater")
+p21<-wilcox.test(exph2o2$EI_spt45_r2.x, exph2o2$EI_spt45_r1.y, paired=T, alternative = "greater")
+p22<-wilcox.test(exph2o2$EI_spt45_r2.x, exph2o2$EI_spt45_r2.y, paired=T, alternative = "greater")
+max(p11$p.value, p12$p.value, p21$p.value, p22$p.value)
+
+#for EI Spt4/5 comparison with stat data
+p11<-wilcox.test(expstat$EI_spt45_r1.x, expstat$EI_spt45_r1.y, paired=T, alternative = "greater")
+p12<-wilcox.test(expstat$EI_spt45_r1.x, expstat$EI_spt45_r2.y, paired=T, alternative = "greater")
+p21<-wilcox.test(expstat$EI_spt45_r2.x, expstat$EI_spt45_r1.y, paired=T, alternative = "greater")
+p22<-wilcox.test(expstat$EI_spt45_r2.x, expstat$EI_spt45_r2.y, paired=T, alternative = "greater")
+max(p11$p.value, p12$p.value, p21$p.value, p22$p.value)
+
+#for EI Elf1 comparison with h2o2 data
+p11<-wilcox.test(exph2o2$EI_elf1_r1.x, exph2o2$EI_elf1_r1.y, paired=T, alternative = "greater")
+p12<-wilcox.test(exph2o2$EI_elf1_r1.x, exph2o2$EI_elf1_r2.y, paired=T, alternative = "greater")
+p21<-wilcox.test(exph2o2$EI_elf1_r2.x, exph2o2$EI_elf1_r1.y, paired=T, alternative = "greater")
+p22<-wilcox.test(exph2o2$EI_elf1_r2.x, exph2o2$EI_elf1_r2.y, paired=T, alternative = "greater")
+max(p11$p.value, p12$p.value, p21$p.value, p22$p.value)
+
+#for EI Elf1 comparison with stat data
+p11<-wilcox.test(expstat$EI_elf1_r1.x, expstat$EI_elf1_r1.y, paired=T, alternative = "greater")
+p12<-wilcox.test(expstat$EI_elf1_r1.x, expstat$EI_elf1_r2.y, paired=T, alternative = "greater")
+p21<-wilcox.test(expstat$EI_elf1_r2.x, expstat$EI_elf1_r1.y, paired=T, alternative = "greater")
+p22<-wilcox.test(expstat$EI_elf1_r2.x, expstat$EI_elf1_r2.y, paired=T, alternative = "greater")
+max(p11$p.value, p12$p.value, p21$p.value, p22$p.value)
+```
+Conducting wilcoxon rank sum test for averaged data between replicates
+```{r}
+#for RNAP EI comparison with h2o2 data
+wilcox.test((exph2o2$EI_RNAP1.x+exph2o2$EI_RNAP2.x)/2, (exph2o2$EI_RNAP1.y+exph2o2$EI_RNAP1.y)/2, paired=T, alternative = "greater")
+
+#for RNAP EI comparison with stat data
+wilcox.test((expstat$EI_RNAP1.x+expstat$EI_RNAP2.x)/2, (expstat$EI_RNAP1.y+expstat$EI_RNAP1.y)/2, paired=T, alternative = "greater")
+
+#for EI Spt4/5 comparison with h2o2 data
+wilcox.test((exph2o2$EI_spt45_r1.x+exph2o2$EI_spt45_r2.x)/2, (exph2o2$EI_spt45_r1.y+exph2o2$EI_spt45_r2.y)/2, paired=T, alternative = "greater")
+
+
+#for EI Spt4/5 comparison with stat data
+wilcox.test((expstat$EI_spt45_r1.x+expstat$EI_spt45_r2.x)/2, (expstat$EI_spt45_r1.y+expstat$EI_spt45_r2.y)/2, paired=T, alternative = "greater")
+
+
+#for EI Elf1 comparison with h2o2 data
+wilcox.test((exph2o2$EI_elf1_r1.x+exph2o2$EI_elf1_r2.x)/2, (exph2o2$EI_elf1_r1.y+exph2o2$EI_elf1_r2.y)/2, paired=T, alternative = "greater")
+
+```
+
+
+
+Boxplots
+```{r}
+exph2o2.long <- data.frame(
+       x = c(c(rowMeans(exph2o2[,2:3]), rowMeans(exph2o2[,8:9])), c(rowMeans(exph2o2[,4:5]), rowMeans(exph2o2[,10:11]), rowMeans(exph2o2[,6:7]), rowMeans(exph2o2[,12:13]))),
+       y = rep(c("RNAP", "Spt4/5", "Elf1"), each = nrow(exph2o2)*2),
+       z = rep(rep(c("expon", "H2O2"), each=nrow(exph2o2)), 3),
+       stringsAsFactors = FALSE
+   )
+exph2o2.long$y <- factor(exph2o2.long$y,
+    levels = c('RNAP','Spt4/5', 'Elf1'),ordered = TRUE)
+
+plotbox<-ggplot(exph2o2.long, aes(y, x, fill=factor(z))) +
+      geom_boxplot(outlier.size=0.2, notch=T) + ylab("Escape index") + xlab("")+
+  scale_y_continuous(limits=c(-6, 4),breaks=c(-6,-4,-2,0, 2, 4), expand = c(0, 0)) +
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+              legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+              panel.border  = element_rect(colour = "black", size = 0.5))
+plotbox
+ggsave("boxplot.EscapeIndex.H2O2vsExpon.pdf", plot = plotbox, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+```
+
+Boxplots for stat phase
+```{r}
+expstat.long <- data.frame(
+       x = c(c(rowMeans(expstat[,2:3]), rowMeans(expstat[,8:9])), c(rowMeans(expstat[,4:5]), rowMeans(expstat[,10:11]), rowMeans(expstat[,6:7]), rowMeans(expstat[,12:13]))),
+       y = rep(c("RNAP", "Spt4/5", "Elf1"), each = nrow(expstat)*2),
+       z = rep(rep(c("expon", "stat"), each=nrow(expstat)), 3),
+       stringsAsFactors = FALSE
+   )
+expstat.long$y <- factor(expstat.long$y,
+    levels = c('RNAP','Spt4/5', 'Elf1'),ordered = TRUE)
+
+plotbox<-ggplot(expstat.long, aes(y, x, fill=factor(z))) +
+      geom_boxplot(outlier.size=0.2, notch=T) + ylab("Escape index") + xlab("")+
+  scale_y_continuous(limits=c(-6, 4),breaks=c(-6,-4,-2,0, 2, 4), expand = c(0, 0)) +
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+              legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+              panel.border  = element_rect(colour = "black", size = 0.5))
+plotbox
+ggsave("boxplot.EscapeIndex.StatVsExpon.pdf", plot = plotbox, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+```
+
+
+
+```{r link_to_transcriptome}
+correl.df <- data.frame(RNA.change = log(exph2o2$Expression.expon/exph2o2$Expression.h2o2,2),
+                      TFB.change = log(sqrt(exph2o2$TFB1_foldR1.x * exph2o2$TFB1_foldR2.x),2) -
+                        log(sqrt(exph2o2$TFB1_foldR1.y * exph2o2$TFB1_foldR2.y),2),
+                      TFEb.change = log(sqrt(exph2o2$TFEb_foldR1.x * exph2o2$TFEb_foldR2.x),2) -
+                        log(sqrt(exph2o2$TFEb_foldR1.y * exph2o2$TFEb_foldR2.y),2),
+                      RNAP.EI.change = exph2o2$EI_RNAPmean.x - exph2o2$EI_RNAPmean.y,
+                      Spt45.EI.change = exph2o2$EI_Spt45mean.x - exph2o2$EI_Spt45mean.y,
+                      Elf1.EI.change = exph2o2$EI_Elf1mean.x - exph2o2$EI_Elf1mean.y,
+                      CPSF1.load.change = log(exph2o2$cpsf1_r1_promoter.x/exph2o2$elf1_r1_promoter.x,2) +
+                        log(exph2o2$cpsf1_r2_promoter.x/exph2o2$elf1_r2_promoter.x,2) -
+                        log(exph2o2$cpsf1_r1_promoter.y/exph2o2$elf1_r1_promoter.y,2) -
+                        log(exph2o2$cpsf1_r2_promoter.y/exph2o2$elf1_r2_promoter.y,2)
+                      ) 
+#filter out ribosomal promoter
+correl.df<-correl.df[!is.na(correl.df$RNA.change),]
+
+
+heatmap.df <- cor(correl.df, method = "spearman")
+heatmap.df<-reshape2::melt(heatmap.df)
+
+hm <- ggplot(data=heatmap.df, aes(x=Var1, y=Var2)) + geom_raster(aes(fill=value), interpolate = F) + 
+   scale_fill_continuous_diverging("Purple-Brown", limits=c(-1,1), rev=T) + theme_void()
+hm  
+ggplot2::ggsave("heatmap.changes.expon.vs.h2o2.pdf", plot = hm, device = "pdf", path = NULL,
+       scale = 1, width = 25, height = 25, units = c("mm"), limitsize = TRUE)
+
+#pvalue calculation
+
+pval.df<-matrix(nrow=7, ncol=7)
+for(i in 1:7){
+  for(j in 1:7){
+    x<-cor.test(correl.df[,i], correl.df[,j], method="spearman")$p.value
+    pval.df[i,j] <- x
+    }
+}
+
+#manual "bonferroni" correction: 15 comparisons
+padj.df <- pval.df * 21
+padj.df
+```
+
+
+```{r seaborn plots}
+require(reticulate)
+use_python('~/miniconda3/bin/python3.7')
+
+#importing required Python libraries/modules
+sns <- import('seaborn')
+plt <- import('matplotlib.pyplot')
+pd <- import('pandas')
+
+#recreate heatmap df
+heatmap.df <- cor(correl.df, method = "spearman")
+
+#building a heatmap using seaborn 
+#r_to_py() converts R object into a python 
+sns$heatmap(r_to_py(heatmap.df), fmt="g", cmap ="RdBu_r", center=0, vmin=-1, vmax=1)
+#save the plot
+plt$savefig("heatmap.seaborn.exponVsH2O2.pdf")
+#display the plot
+plt$show()
+```
+
+
+
+
+
+```{r identifying TUs with TFB accumulation}
+plot(correl.df$RNAP.EI.change, correl.df$TFB.change, pch=19)
+
+#identify TUs where RNAP escape remains stable or increases after stress and TFB peaks stable
+exph2o2.all[which(correl.df$TFB.change > 0 & correl.df$RNAP.EI.change < 0),c(1:4)]
+#identify TUs where RNAP escape decreases after stress and TFB accumulates
+exph2o2.all[which(correl.df$TFB.change < -1 & correl.df$RNAP.EI.change > 1),c(1:4)]
+```
+
+
+
+```{r link_to_transcriptome_repl1}
+correl.df.r1 <- data.frame(RNA.change = log(exph2o2.all$tpm.x/exph2o2.all$tpm.y,2),
+                      TFB.change = log(exph2o2.all$TFB1_foldR1.x,2) -
+                        log(exph2o2.all$TFB1_foldR1.y,2),
+                      TFEb.change = log(exph2o2.all$TFEb_foldR1.x,2) -
+                        log(exph2o2.all$TFEb_foldR1.y,2),
+                      RNAP.EI.change = exph2o2.all$EI_RNAP1.x - exph2o2.all$EI_RNAP1.y,
+                      Spt45.EI.change = exph2o2.all$EI_spt45_r1.x - exph2o2.all$EI_spt45_r1.y,
+                      Elf1.EI.change = exph2o2.all$EI_elf1_r1.x - exph2o2.all$EI_elf1_r1.y,
+                      CPSF1.load.change = log(exph2o2.all$cpsf1_r1_promoter.x/exph2o2.all$elf1_r1_promoter.x,2) -
+                        log(exph2o2.all$cpsf1_r1_promoter.y/exph2o2.all$elf1_r1_promoter.y,2)
+                      ) 
+
+heatmap.df.r1 <- cor(correl.df.r1, method = "spearman")
+heatmap.df.r1 <-reshape2::melt(heatmap.df.r1)
+
+hm.r1 <- ggplot(data=heatmap.df.r1, aes(x=Var1, y=Var2)) + geom_raster(aes(fill=value), interpolate = F) + 
+   scale_fill_continuous_diverging("Purple-Brown", limits=c(-1,1), rev=T) + theme_void()
+hm.r1  
+ggplot2::ggsave("heatmap.changes.expon.vs.h2o2.repl1.pdf", plot = hm.r1, device = "pdf", path = NULL,
+       scale = 1, width = 25, height = 25, units = c("mm"), limitsize = TRUE)
+
+#pvalue calculation
+
+pval.df.r1<-matrix(nrow=7, ncol=7)
+for(i in 1:7){
+  for(j in 1:7){
+    x<-cor.test(correl.df.r1[,i], correl.df.r1[,j], method="spearman")$p.value
+    pval.df.r1[i,j] <- x
+    }
+}
+
+#manual "bonferroni" correction: 15 comparisons
+padj.df.r1 <- pval.df.r1 * 21
+padj.df.r1
+```
+
+
+```{r link_to_transcriptome_repl2}
+correl.df.r2 <- data.frame(RNA.change = log(exph2o2.all$tpm.x/exph2o2.all$tpm.y,2),
+                      TFB.change = log(exph2o2.all$TFB1_foldR2.x,2) -
+                        log(exph2o2.all$TFB1_foldR2.y,2),
+                      TFEb.change = log(exph2o2.all$TFEb_foldR2.x,2) -
+                        log(exph2o2.all$TFEb_foldR2.y,2),
+                      RNAP.EI.change = exph2o2.all$EI_RNAP2.x - exph2o2.all$EI_RNAP2.y,
+                      Spt45.EI.change = exph2o2.all$EI_spt45_r2.x - exph2o2.all$EI_spt45_r2.y,
+                      Elf1.EI.change = exph2o2.all$EI_elf1_r2.x - exph2o2.all$EI_elf1_r2.y,
+                      CPSF1.load.change = log(exph2o2.all$cpsf1_r2_promoter.x/exph2o2.all$elf1_r2_promoter.x,2) -
+                        log(exph2o2.all$cpsf1_r2_promoter.y/exph2o2.all$elf1_r2_promoter.y,2)
+                      ) 
+
+heatmap.df.r2 <- cor(correl.df.r2, method = "spearman")
+heatmap.df.r2 <-reshape2::melt(heatmap.df.r2)
+
+hm.r2 <- ggplot(data=heatmap.df.r2, aes(x=Var1, y=Var2)) + geom_raster(aes(fill=value), interpolate = F) + 
+   scale_fill_continuous_diverging("Purple-Brown", limits=c(-1,1), rev=T) + theme_void()
+hm.r2  
+ggplot2::ggsave("heatmap.changes.expon.vs.h2o2.repl2.pdf", plot = hm.r2, device = "pdf", path = NULL,
+       scale = 1, width = 25, height = 25, units = c("mm"), limitsize = TRUE)
+
+#pvalue calculation
+
+pval.df.r2<-matrix(nrow=7, ncol=7)
+for(i in 1:7){
+  for(j in 1:7){
+    x<-cor.test(correl.df.r2[,i], correl.df.r2[,j], method="spearman")$p.value
+    pval.df.r2[i,j] <- x
+    }
+}
+
+#manual "bonferroni" correction: 15 comparisons
+padj.df.r2 <- pval.df.r2 * 21
+padj.df.r2
+```
+
+```{r correl.reproducibility}
+repr.repl.1 <- matrix(nrow=7, ncol=7)
+for(i in 1:7){
+  for(j in 1:7){
+  if(padj.df[i,j] < 0.05 & padj.df.r1[i,j] < 0.05){x<-T}
+  if(padj.df[i,j] < 0.05 & padj.df.r1[i,j] >= 0.05){x<-F}
+  if(padj.df[i,j] >= 0.05){x<-NA}
+    repr.repl.1[i,j]<-x
+    }
+  }
+repr.repl.1
+
+repr.repl.2 <- matrix(nrow=7, ncol=7)
+for(i in 1:7){
+  for(j in 1:7){
+  if(padj.df[i,j] < 0.05 & padj.df.r2[i,j] < 0.05){x<-T}
+  if(padj.df[i,j] < 0.05 & padj.df.r2[i,j] >= 0.05){x<-F}
+  if(padj.df[i,j] >= 0.05){x<-NA}
+    repr.repl.2[i,j]<-x
+    }
+  }
+repr.repl.2
+```
+
+
+```{r link_to_transcriptome.stat}
+correl.df <- data.frame(RNA.change = log(expstat$Expression.expon/expstat$Expression.stat,2),
+                      TFB.change = log(sqrt(expstat$TFB1_foldR1.x * expstat$TFB1_foldR2.x),2) -
+                        log(sqrt(expstat$TFB1_foldR1.y * expstat$TFB1_foldR2.y),2),
+                      TFEb.change = log(sqrt(expstat$TFEb_foldR1.x * expstat$TFEb_foldR2.x),2) -
+                        log(sqrt(expstat$TFEb_foldR1.y * expstat$TFEb_foldR2.y),2),
+                      RNAP.EI.change = expstat$EI_RNAPmean.x - expstat$EI_RNAPmean.y,
+                      Spt45.EI.change = expstat$EI_Spt45mean.x - expstat$EI_Spt45mean.y
+                      ) 
+#filter out ribosomal promoter
+correl.df<-correl.df[!is.na(correl.df$RNA.change),]
+
+
+heatmap.df <- cor(correl.df, method = "spearman")
+heatmap.df<-reshape2::melt(heatmap.df)
+
+hm <- ggplot(data=heatmap.df, aes(x=Var1, y=Var2)) + geom_raster(aes(fill=value), interpolate = F) + 
+   scale_fill_continuous_diverging("Purple-Brown", limits=c(-1,1), rev=T) + theme_void()
+hm  
+ggplot2::ggsave("heatmap.changes.expon.vs.stat.pdf", plot = hm, device = "pdf", path = NULL,
+       scale = 1, width = 25, height = 25, units = c("mm"), limitsize = TRUE)
+
+#pvalue calculation
+
+pval.df<-matrix(nrow=5, ncol=5)
+for(i in 1:5){
+  for(j in 1:5){
+    x<-cor.test(correl.df[,i], correl.df[,j], method="spearman")$p.value
+    pval.df[i,j] <- x
+    }
+}
+
+#manual "bonferroni" correction: 15 comparisons
+padj.df <- pval.df * 10
+padj.df
+```
+```{r seaborn plots2}
+#recreate heatmap df
+heatmap.df <- cor(correl.df, method = "spearman")
+
+#building a heatmap using seaborn 
+#r_to_py() converts R object into a python 
+sns$heatmap(r_to_py(heatmap.df), fmt="g", cmap ="RdBu_r", center=0, vmin=-1, vmax=1)
+#save the plot
+plt$savefig("heatmap.seaborn.exponVsStat.pdf")
+#display the plot
+plt$show()
+```

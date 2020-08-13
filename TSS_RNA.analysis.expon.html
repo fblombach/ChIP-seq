@@ -399,7 +399,6 @@ table(is.na(RNA.merge$Expression.expon[coding]))</code></pre>
 <pre><code>## 
 ## FALSE 
 ##   450</code></pre>
-<p>###REALLY?</p>
 <p>#To filter out repetitive regions where TSS-RNAs cannot be mapped, the first 20 nt are tested for uniqueness, i.e. mappability</p>
 <pre class="bash"><code>export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
 if [ -d temp ]; then rm -Rf temp; fi
@@ -705,7 +704,7 @@ y &lt;- cor(cor.df.bt$rnaSeq, cor.df.bt$fivePrimeCountGM, method=&quot;s&quot;)
 difference[i]&lt;-x - y
 }
 bca(difference, conf.level = 0.999)</code></pre>
-<pre><code>## [1] -0.005949068  0.249611220</code></pre>
+<pre><code>## [1] -0.002594893  0.240582152</code></pre>
 <pre class="r"><code>#data.frame to highlight selected TUs
 cor.df.lab&lt;-cor.df[cor.df$operon_ID %in% c(&quot;ID_207&quot;, &quot;ID_2044&quot;),]
 
@@ -769,7 +768,7 @@ g_rnaSeq</code></pre>
 ## 1000 replicates
 ## 
 ## 95 percent confidence interval:
-##  0.5287586 0.6732939
+##  0.5332511 0.6717015
 ## sample estimates:
 ##       rho 
 ## 0.6052862</code></pre>
@@ -781,7 +780,7 @@ g_rnaSeq</code></pre>
 ## 1000 replicates
 ## 
 ## 95 percent confidence interval:
-##  0.5116340 0.6506368
+##  0.5064880 0.6463247
 ## sample estimates:
 ##      rho 
 ## 0.581589</code></pre>
@@ -793,7 +792,7 @@ g_rnaSeq</code></pre>
 ## 1000 replicates
 ## 
 ## 95 percent confidence interval:
-##  0.4005163 0.5535268
+##  0.3971719 0.5509987
 ## sample estimates:
 ##       rho 
 ## 0.4783109</code></pre>
@@ -805,7 +804,7 @@ g_rnaSeq</code></pre>
 ## 1000 replicates
 ## 
 ## 95 percent confidence interval:
-##  0.4044147 0.5586651
+##  0.4030207 0.5595899
 ## sample estimates:
 ##       rho 
 ## 0.4873024</code></pre>

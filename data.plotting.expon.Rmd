@@ -1,0 +1,455 @@
+---
+title: "data.plotting.TU100.expon"
+author: "Fabian Blombach"
+date: "28/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+data <- read.delim("data/data.expon.txt", header=T)
+TSS <- "genome_data/TSSvATG.uniqueTFBvTFEbOccup.TU100.intTFBfilt.expon.bed"
+TSSbed <- read.table(TSS)
+TSSbed$V4 <- as.character(TSSbed$V4)
+nrows <- nrow(TSSbed)
+data.TSS<-subset(data, operon_id %in% TSSbed$V4)
+data.TSS<-data.TSS[match(TSSbed$V4, data.TSS$operon_id),]
+mappedTSS <- "genome_data/TSS.uniqueTFBvTFEbOccup.TU100.intTFBfilt.expon.bed"
+TSS500 <- "genome_data/TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.expon.bed"
+TSS500bed <- read.table(TSS500)
+TSS500bed$V4 <- as.character(TSS500bed$V4)
+nrows500 <- nrow(TSS500bed)
+
+RNA<-read.delim("data/NC_002754_transcripts.txt")
+#TU definition from Wurtzel et al (2009) Genome Research
+TUs<-read.delim("genome_data/Wurtzel_allTUs.txt")
+TUs$operon_ID<-paste0("ID_", TUs$operon_ID)
+
+
+genomeFasta <- "genome_data/NC_002754.fna"
+genomeSizes <- "genome_data/NC_002754.sizes"
+
+
+phase <- "expon"
+
+require(RVAideMemoire)
+require(ggplot2)
+require(dplyr)
+require(Biostrings)
+require(dplyr)
+require(universalmotif)
+
+#define directory where NCBI GEO data for superseries GSE141290 are stored
+mydir <- "../GSE141290/"
+
+cpsf1_r1 <- paste0(mydir, "/GSM4200375_CPSF1_expon_r1.normRatio.bw")
+cpsf1_r2 <- paste0(mydir, "/GSM4200376_CPSF1_expon_r2.normRatio.bw")
+spt45_r1 <- paste0(mydir, "/GSM4200371_Spt45_expon_r1.normRatio.bw")
+spt45_r2 <- paste0(mydir, "/GSM4200372_Spt45_expon_r2.normRatio.bw")
+elf1_r1 <-  paste0(mydir, "/GSM4200373_Elf1_expon_r1.normRatio.bw")
+elf1_r2 <-  paste0(mydir, "/GSM4200374_Elf1_expon_r2.normRatio.bw")
+RNAP1 <-    paste0(mydir, "/GSM4200369_Rpo47_expon_r1.normRatio.bw")
+RNAP2 <-    paste0(mydir, "/GSM4200370_Rpo47_expon_r2.normRatio.bw")
+
+TFB_peaks <- "data/TFB1.expon.peaksIDR0.05.bed"
+TFEb_peaks <- "data/TFEb.expon.peaksIDR0.05.bed"
+
+
+theme_set(theme_bw(base_size = 8))
+
+folder<-paste0("../plots.expon.", Sys.Date())
+  
+Sys.setenv(phase = phase, TSS = TSS, TSS500 = TSS500, mappedTSS = mappedTSS, nrows = nrows,nrows500 = nrows500, RNAP1 = RNAP1, RNAP2 = RNAP2, cpsf1_r1 = cpsf1_r1, cpsf1_r2 = cpsf1_r2, spt45_r1 = spt45_r1, spt45_r2 = spt45_r2, elf1_r1 = elf1_r1, elf1_r2 = elf1_r2,TFB_peaks = TFB_peaks, TFEb_peaks = TFEb_peaks, folder = folder, genomeFasta = genomeFasta, genomeSizes =genomeSizes)
+```
+
+
+```{bash calculate_occupancyPromoter}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+#calculate coverage normalised to input
+computeMatrix reference-point --sortRegions keep -bs 1 -a 100 -b 50 -R $TSS -S $spt45_r1 $spt45_r2 $elf1_r1 $elf1_r2 $cpsf1_r1 $cpsf1_r2 $RNAP1 $RNAP2 -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
+rm temp/trashme.npz;
+head -n 2 temp/trashme.tab > temp/coverage.tab; 
+tail -n $nrows temp/trashme.tab >> temp/coverage.tab; rm temp/trashme.tab;
+```
+
+```{r occupancyPromoter}
+x<-read.table("temp/coverage.tab")
+x[is.na(x)]<-0
+r1M_spt45<-as.matrix(x[,1:150])
+r2M_spt45<-as.matrix(x[,151:300])
+r1M_elf1<-as.matrix(x[,301:450])
+r2M_elf1<-as.matrix(x[,451:600])
+r1M_cpsf<-as.matrix(x[,601:750])
+r2M_cpsf<-as.matrix(x[,751:900])
+r1M_RNAP<-as.matrix(x[,901:1050])
+r2M_RNAP<-as.matrix(x[,1051:1200])
+
+
+cpsf_pr1<-rowMeans(r1M_cpsf)
+cpsf_pr2<-rowMeans(r2M_cpsf)
+cpsf_prM<-log(sqrt(cpsf_pr1*cpsf_pr2),2)
+spt45_pr1<-rowMeans(r1M_spt45)
+spt45_pr2<-rowMeans(r2M_spt45)
+spt45_prM<-log(sqrt(spt45_pr1*spt45_pr2),2)
+elf1_pr1<-rowMeans(r1M_elf1)
+elf1_pr2<-rowMeans(r2M_elf1)
+elf1_prM<-log(sqrt(elf1_pr1*elf1_pr2),2)
+RNAP_pr1<-rowMeans(r1M_RNAP)
+RNAP_pr2<-rowMeans(r2M_RNAP)
+RNAP_prM<-log(sqrt(RNAP_pr1*RNAP_pr2),2)
+cpsfLoad<- cpsf_prM - spt45_prM
+cpsfLoad.e<- cpsf_prM - elf1_prM
+elf1Load<- elf1_prM - spt45_prM
+spt45Load<-spt45_prM - RNAP_prM
+
+
+
+data.100<-data.frame(operon_ID = TSSbed$V4, CPSF1Pr = cpsf_prM, Spt45Pr = spt45_prM, Elf1Pr = elf1_prM, RNAPPr = RNAP_prM, cpsfLoad = cpsfLoad, cpsfLoad.e = cpsfLoad.e, elf1Load = elf1Load, spt45Load = spt45Load)
+
+
+
+rm(r1M_cpsf, r2M_cpsf, r1M_spt45, r2M_spt45, r1M_elf1, r2M_elf1, r1M_RNAP,r2M_RNAP, x)
+```
+
+```{bash calculate_occupancyBody}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+#calculate coverage normalised to input
+computeMatrix reference-point --sortRegions keep -bs 1 -a 500 -b 0 -R $TSS500 -S $spt45_r1 $spt45_r2 $elf1_r1 $elf1_r2 $cpsf1_r1 $cpsf1_r2 $RNAP1 $RNAP2 -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
+rm temp/trashme.npz;
+head -n 2 temp/trashme.tab > temp/coverageBd.tab; 
+tail -n $nrows500 temp/trashme.tab >> temp/coverageBd.tab; rm temp/trashme.tab;
+```
+
+```{r occupancyBody}
+x<-read.table("temp/coverageBd.tab")
+x[is.na(x)]<-0
+r1M_spt45<-as.matrix(x[,251:500])
+r2M_spt45<-as.matrix(x[,751:1000])
+r1M_elf1<-as.matrix(x[,1251:1500])
+r2M_elf1<-as.matrix(x[,1751:2000])
+r1M_cpsf<-as.matrix(x[,2251:2500])
+r2M_cpsf<-as.matrix(x[,2751:3000])
+r1M_RNAP<-as.matrix(x[,3251:3500])
+r2M_RNAP<-as.matrix(x[,3751:4000])
+
+
+cpsf_bd1<-rowMeans(r1M_cpsf)
+cpsf_bd2<-rowMeans(r2M_cpsf)
+cpsf_bdM<-log(sqrt(cpsf_bd1*cpsf_bd2),2)
+spt45_bd1<-rowMeans(r1M_spt45)
+spt45_bd2<-rowMeans(r2M_spt45)
+spt45_bdM<-log(sqrt(spt45_bd1*spt45_bd2),2)
+elf1_bd1<-rowMeans(r1M_elf1)
+elf1_bd2<-rowMeans(r2M_elf1)
+elf1_bdM<-log(sqrt(elf1_bd1*elf1_bd2),2)
+RNAP_bd1<-rowMeans(r1M_RNAP)
+RNAP_bd2<-rowMeans(r2M_RNAP)
+RNAP_bdM<-log(sqrt(RNAP_bd1*RNAP_bd2),2)
+
+data.body<-data.frame(operon_ID = TSS500bed$V4, CPSF1Bd = cpsf_bdM, Spt45Bd = spt45_bdM, Elf1Bd = elf1_bdM, RNAPBd = RNAP_bdM)
+
+
+rm(r1M_cpsf, r2M_cpsf, r1M_spt45, r2M_spt45, r1M_elf1, r2M_elf1, r1M_RNAP,r2M_RNAP, x)
+
+data.100 <- merge(data.100, data.body, by.x="operon_ID", by.y="operon_ID", all.x=T)
+
+data.100$EI_RNAP <- data.100$RNAPBd - data.100$RNAPPr
+data.100$EI_spt45 <- data.100$Spt45Bd - data.100$Spt45Pr
+data.100$EI_elf1 <- data.100$Elf1Bd - data.100$Elf1Pr
+```
+
+
+Match TFB and TFEb peak data
+```{bash}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+mkdir temp
+
+#merge TFB and TFEb peaks
+bedtools window -w 40 -a $TFB_peaks -b $TFEb_peaks > temp/btWindow40.TFB1.TFEb."$phase"_IDR0.05.bed
+
+
+#assign TFB/TFEb peaks to TSS and start codons
+bedtools window -w 40 -a temp/btWindow40.TFB1.TFEb."$phase"_IDR0.05.bed -b $TSS > temp/btWindow40.TFB1.TFEb."$phase".TU100.bed
+
+```
+
+```{r biunique_assignment_check}
+# control for biunique assigment of peaks to each other
+peaks<-read.table(paste0("temp/btWindow40.TFB1.TFEb.",phase,"_IDR0.05.bed"))
+nonuniqueTFB<- peaks[duplicated(peaks$V4),]
+nonuniqueTFEb<- peaks[duplicated(peaks$V9),]
+
+data.GTF<- read.table(paste0("temp/btWindow40.TFB1.TFEb.", phase, ".TU100.bed"))
+
+
+#filter any nonuniquely paired TFB or TFEb peaks from data.u
+data.GTF<-subset(data.GTF,  !(V4 %in% nonuniqueTFB$V4)  & !(V9 %in% nonuniqueTFEb$V9))
+
+
+TFB1<-as.data.frame(data.GTF[,c(2,14)])
+colnames(TFB1)<-c("TFB1_peakStart", "operon_id")
+TFB1_2<-read.table(paste0("data/TFB1.",phase,".peaksIDR0.05_posAverageOnly.txt"), header=T)
+TFB1_2<-as.data.frame(TFB1_2[,c(2,7,8)])
+TFB1_3<- merge(TFB1, TFB1_2, by.x="TFB1_peakStart", by.y="start", sort=F)
+colnames(TFB1_3)<-c("TFB1_peakStart", "operon_ID", "TFB1_foldR1", "TFB1_foldR2")
+TFB1_3$TFB <- log(sqrt(TFB1_3$TFB1_foldR1*TFB1_3$TFB1_foldR1), 2)
+
+TFEb<-as.data.frame(data.GTF[,c(7,14)])
+colnames(TFEb)<-c("TFEb_peakStart", "operon_id")
+TFEb_2<-read.table(paste0("data/TFEb.", phase ,".peaksIDR0.05_posAverageOnly.txt"), header=T)
+TFEb_2<-as.data.frame(TFEb_2[,c(2,7,8)])
+TFEb_3<- merge(TFEb, TFEb_2, by.x="TFEb_peakStart", by.y="start", sort=F)
+colnames(TFEb_3)<-c("TFEb_peakStart", "operon_ID", "TFEb_foldR1", "TFEb_foldR2")
+TFEb_3$TFEb <- log(sqrt(TFEb_3$TFEb_foldR1*TFEb_3$TFEb_foldR1), 2)
+data.100<-merge(data.100, TFB1_3[,2:5], by.x="operon_ID", by.y="operon_ID", sort=F)
+data.100<-merge(data.100, TFEb_3[,2:5], by.x="operon_ID", by.y="operon_ID", sort=F)
+```
+
+
+Link TSSs to RNA-seq data
+```{r transcriptome}
+RNAfilt<-data.frame(matrix(nrow=nrow(TSSbed), ncol=ncol(RNA)))
+for (i in 1:nrow(TSSbed)){
+if(TSSbed$V6[i]=="+"){j<-which(RNA$Translation.Start - TSSbed$V3[i]== 
+                                min(RNA[RNA$Translation.Start - TSSbed$V3[i]>=0,]$Translation.Start - TSSbed$V3[i], na.rm=T))
+                      k<-which(RNA$Transcription.Start - TSSbed$V3[i]== 
+                                min(RNA[RNA$Transcription.Start - TSSbed$V3[i]>=0,]$Transcription.Start - TSSbed$V3[i], na.rm=T))
+                      if(j <= k){RNAfilt[i,] <- RNA[j,]} else {RNAfilt[i,] <- NA}}
+if(TSSbed$V6[i]=="-"){j<-which(RNA$Translation.Start - TSSbed$V3[i]== 
+                                max(RNA[RNA$Translation.Start - TSSbed$V3[i]<=0,]$Translation.Start - TSSbed$V3[i], na.rm=T))
+                      k<-which(RNA$Transcription.Start - TSSbed$V3[i]== 
+                                max(RNA[RNA$Transcription.Start - TSSbed$V3[i]<=0,]$Transcription.Start - TSSbed$V3[i], na.rm=T))
+                      if(j >= k){RNAfilt[i,] <- RNA[j,]} else {RNAfilt[i,] <- NA}}
+}
+colnames(RNAfilt)<-colnames(RNA)
+
+#filtering ncRNA not included in RNA-seq
+TU.sel <- TUs[TUs$operon_ID %in% TSSbed$V4,]
+ncRNA<-TU.sel[union(grep('SSOt', TU.sel$Locus), grep('SSOr', TU.sel$Locus)),]
+coding<-!(TSSbed$V4 %in% ncRNA$operon_ID)
+
+RNA.merge<- cbind(TSSbed, RNAfilt[,6:34])
+RNA.merge[!coding,] <- NA
+
+
+#check result
+table(is.na(RNA.merge$Expression.expon[coding]))
+
+data.100$RNA <- RNA.merge$Expression.expon
+data.100$log10.RNA <- log(data.100$RNA, 10)
+```
+
+#Link to TATA-box motif position and score
+```{r TATA-box1}
+#creating bed file with x to y positions for mapped TSSs
+x = -42
+y = -19
+TSSbed.mapped<-read.table(mappedTSS)
+TSSslop<-TSSbed.mapped
+for(i in 1:nrow(TSSslop)){
+if(TSSslop$V6[i] == "+") {TSSslop$V3[i] <- TSSbed.mapped$V3[i] +y
+                          TSSslop$V2[i] <- TSSbed.mapped$V2[i] +x}
+else {TSSslop$V3[i] <- TSSbed.mapped$V3[i] -x
+      TSSslop$V2[i] <- TSSbed.mapped$V2[i] -y}
+}
+write.table(TSSslop, "temp/TSSslop.bed", quote=F, row.names=F, col.names=F, sep="\t")
+```
+
+```{bash TATA-box2}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+if [ -d temp/MEME ]; then rm -Rf temp/MEME; fi
+bedtools getfasta -s -nameOnly -fi $genomeFasta -bed temp/TSSslop.bed -fo temp/TSS.mapped.fasta
+
+meme temp/TSS.mapped.fasta -o temp/MEME -dna -minw 8 -maxw 15 -nmotifs 1 -mod oops -bfile ~/HTS/MEME/background_models/Sso_background_model.prn
+```
+
+
+```{r TATA-box3}
+#importing meme data with position and pvalue of individual motif occurences
+meme<-read_meme("temp/MEME/meme.txt",  readsites = T, readsites.meta = T)[[3]]
+#remove strand information from Sequence
+meme$operon_ID <- gsub('.{3}$', '', meme$Sequence)
+#create subset of data with mapped TSS
+data.100.mapped<- data.100 %>% filter(operon_ID %in% TSSbed.mapped$V4)
+
+#match order
+meme<- meme[match(data.100.mapped$operon_ID, meme$operon_ID),]
+
+cor.test(data.100.mapped$TFB, meme$Pvalue, method="s")
+
+
+data.100.mapped$TATApval <- meme$Pvalue
+#postion corrected for 15 bp motif with last 8 nucleotides corresponding to TATAbox
+data.100.mapped$TATApos.start <- meme$Position +7 -41
+```
+
+#Link to deltaGInr
+```{bash Sequence_of_200nt_window}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+
+bedtools slop -s -r 3 -l 3 -i $mappedTSS -g $genomeSizes > temp/TSSbed.slop.bed
+bedtools getfasta -s -fi $genomeFasta -bed temp/TSSbed.slop.bed -fo temp/deltaGInr.fasta
+```
+
+```{r deltaGInr calculation}
+dG.fasta <- readDNAStringSet("temp/deltaGInr.fasta")
+
+#Temperature in Kelvin
+temp=349.15
+#Salt concentration in molar
+salt= 0.025
+
+#load reference values from Sugimoto et al paper (Biochemistry 34:11211-6, 1995)
+NN<-read.table("data/NN_thermodynamics.txt", header=T, sep="\t")
+NN$NN <- toupper(NN$NN)
+NN$deltaH <- as.numeric(as.character(NN$deltaH))
+NN$deltaS <- as.numeric(as.character(NN$deltaS))
+#delH is in kcal/mol, while delS is in cal/mol*k, calculate the delG in kcal/mol
+NN$deltaG <- NN$deltaH - (NN$deltaS*temp/1000)
+
+diNucMat<-matrix(nrow=nrow(TSSbed.mapped), ncol=6)
+for (i in 1:nrow(TSSbed.mapped)){
+  for(j in 1:6){
+   y<-substr(as.character(dG.fasta[[i]]), j, j+1)
+   diNucMat[i,j]<-y
+  }
+}
+
+# replace dinucleotides with corresponding deltaG values
+dinucG<-diNucMat
+  for (k in 1:16) {
+  dinucG[dinucG == NN[k,1]]<- NN[k,4]
+  }
+dinucG<-matrix(as.numeric(dinucG), nrow=nrow(TSSbed.mapped))
+
+deltaGInr <- rowSums(dinucG)
+
+data.100.mapped$deltaGInr <- deltaGInr
+```
+
+
+
+```{r export table}
+write.table(data.100.mapped, "data.100.mapped.expon.txt", row.names=F, col.names=T, sep="\t", quote=F)
+```
+
+
+create folder to export plots to
+```{bash}
+#delete temp folder content
+mkdir $folder
+```
+
+```{r plotting and correlation}
+#select data points to highlight in red
+data.lab <- data.100 %>% filter(operon_ID %in% c("ID_207", "ID_2044"))
+
+# function to calculate density
+get_density <- function(a, b, n = 100) {
+  dens <- MASS::kde2d(x = a, y = b, n = n)
+  ix <- findInterval(a, dens$x)
+  iy <- findInterval(b, dens$y)
+  ii <- cbind(ix, iy)
+  return(dens$z[ii])
+}
+
+
+#plotting and correlation function
+#axsym option for same scale of x and y axis, default is T, Bd option to limit data set to min 500bp TU size (TUs with Bd calculation), and heat option to switch of heat scatter plotting
+plot.data<-function(x,y,axsym=T, Bd=F, heat=T) {
+  if(Bd == F) data <- data.100
+  if(Bd == T) data <- data.100 %>% filter(operon_ID %in% data.body$operon_ID)
+  #filter out NAs (for RNA)
+  filter <- (is.na(data[[x]]) | is.na(data[[y]])) == F
+  #calculate density
+  plot.density<- get_density(data[[x]][filter], data[[y]][filter])
+  if(axsym == T){
+  range.xy <- max(c(data[[x]][filter], data[[y]][filter])) - min(c(data[[x]][filter], data[[y]][filter]))
+  lm.cx<- ceiling(2*(max(c(data[[x]][filter], data[[y]][filter]))  + 0.05*range.xy))/2
+  lm.fx<- floor(2*(min(c(data[[x]][filter], data[[y]][filter])) - 0.05*range.xy))/2
+  lm.cy<-lm.cx
+  lm.fy<-lm.fx
+  }
+  if(axsym == F){
+  range.x <- max(data[[x]][filter]) - min(data[[x]][filter])
+  lm.cx<- ceiling(2*(max(data[[x]][filter]) + 0.05*range.x))/2
+  lm.fx<- floor(2*(min(data[[x]][filter]) - 0.05*range.x))/2
+  range.y <- max(data[[y]][filter]) - min(data[[y]][filter])
+  lm.cy<- ceiling(2*(max(data[[y]][filter]) + 0.05*range.y))/2
+  lm.fy<- floor(2*(min(data[[y]][filter]) - 0.05*range.y))/2
+  }
+  correl<-spearman.ci(data[[x]][filter],data[[y]][filter])  
+  
+  plot <- if(heat==T){ggplot(data=data[filter,], aes_string(x=x , y=y, colour = plot.density))} else {
+                      ggplot(data=data[filter,], aes_string(x=x , y=y), colour="black")} 
+  plot <- plot + geom_point(cex=0.2) + 
+    geom_point(data=data.lab, aes_string(x=x, y=y),cex=0.2, colour="red")+
+    scale_color_viridis_c() +
+    xlab(x) + ylab(y) + 
+  scale_y_continuous(limits=c(lm.fy, lm.cy), breaks=c(-10:10), expand = c(0, 0)) +
+  scale_x_continuous(limits=c(lm.fx, lm.cx), breaks=c(-10:10), expand = c(0, 0)) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  ggtitle(paste0(x,".vs.", y, ". rho =", round(correl$estimate, digits=2), ", 95%CI [", 
+             round(correl$conf.int[1], digits=2), ", ", 
+             round(correl$conf.int[2], digits=2), "], n=", sum(filter))) +
+    if(axsym==T){geom_abline(slope=1)}
+plot
+#Saving plot as 45x45 mm pdf 
+ggplot2::ggsave(paste0(folder, "/scatter.", if(Bd==T){"TU500."}, x, "v", y, ".", phase, ".pdf"), plot = plot, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+}
+
+plot.data("TFB", "TFEb")
+plot.data("TFB", "RNAPPr")
+plot.data("RNAPPr", "TFEb")
+plot.data("RNAPPr", "Spt45Pr")
+plot.data("RNAPPr", "Elf1Pr")
+plot.data("RNAPPr", "CPSF1Pr")
+plot.data("Spt45Pr", "CPSF1Pr")
+
+plot.data("EI_RNAP", "EI_elf1", axsym=T, heat=F, Bd=T)
+plot.data("EI_RNAP", "EI_spt45", axsym=T, heat=F, Bd=T)
+plot.data("EI_spt45", "EI_elf1", axsym=T, heat=F, Bd=T)
+
+plot.data("cpsfLoad", "EI_spt45", axsym=F, heat=F, Bd=T)
+plot.data("cpsfLoad.e", "EI_elf1", axsym=F, heat=F, Bd=T)
+
+
+plot.data("RNAPPr", "Spt45Pr", Bd=T, heat=F)
+plot.data("RNAPPr", "Elf1Pr", Bd=T, heat=F)
+plot.data("Spt45Pr", "Elf1Pr", Bd=T, heat=F)
+
+plot.data("cpsfLoad", "spt45Load", axsym=F,heat=T)
+plot.data("spt45Load", "elf1Load", axsym=F)
+plot.data("elf1Load", "EI_elf1", axsym=F, Bd=T, heat=F)
+plot.data("spt45Load", "EI_spt45", axsym=F, Bd=T, heat=F)
+plot.data("elf1Load", "EI_spt45", axsym=F, Bd=T, heat=F)
+
+plot.data("cpsfLoad", "log10.RNA", axsym=F, heat=F, Bd=T)
+plot.data("cpsfLoad.e", "log10.RNA", axsym=F, heat=F, Bd=T)
+
+plot.data("RNAPPr", "log10.RNA", axsym=F, Bd=T, heat=F)
+plot.data("RNAPBd", "log10.RNA", axsym=F, Bd=T, heat=F)
+plot.data("TFEb", "log10.RNA", axsym=F, Bd=T, heat=F)
+plot.data("TFB", "log10.RNA", axsym=F, Bd=T, heat=F)
+```
+
+
+```{r bootstrap correlation difference}
+require(coxed)
+data.filt <- data.100 %>% filter(operon_ID %in% data.body$operon_ID)
+data.filt <- data.filt[data.filt$operon_ID != "ID_669",]
+difference<-vector()
+for(i in 1:10000){
+bt <- sample(1:nrow(data.filt), size = nrow(data.filt), replace = T) 
+data.bt<-data.filt[bt,]
+x <- cor(data.bt$RNAPBd, data.bt$RNA.tpm, method="s")
+y <- cor(data.bt$RNAPPr, data.bt$RNA.tpm, method="s")
+difference[i]<-x - y
+}
+bca(difference, conf.level = 0.999)
+
+```
+

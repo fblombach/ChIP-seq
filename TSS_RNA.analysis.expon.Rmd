@@ -90,16 +90,6 @@ RNA.merge[!coding,] <- NA
 table(is.na(RNA.merge$Expression.expon[coding]))
 ```
 
-
-
-
-
-###REALLY?
-
-
-
-
-
 #To filter out repetitive regions where TSS-RNAs cannot be mapped, the first 20 nt are tested for uniqueness, i.e. mappability
 ```{bash Sequence_of_initial_20nt}
 export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
