@@ -125,7 +125,7 @@ dataMerged<-data.frame(deltaG, covMeans)
 row.names(dataMerged)<-row.names(mono)
 dataMerged<- merge(dataMerged, data, by.x="row.names", by.y="operon_id", sort=F)
 
-#filter out TUs with bad RNAP recruitment (SSO8620 and SSO2036)
+#filter out TUs with bad RNAP recruitment (SSO8620 and SSO2036) rRNA promoter)
 dataMerged <- dataMerged[!(dataMerged$Row.names %in% c("ID_1088", "ID_1368", "ID_669")),]
 
 #length final data set
