@@ -6,8 +6,6 @@ output: html_document
 ---
 This script compares EI data between different growth phases
 ```{r setup, include=FALSE}
-theme_set(theme_bw(base_size = 8))
-
 knitr::opts_chunk$set(echo = TRUE)
 expon <- read.delim("data/data.expon.txt", header=T)
 stat  <- read.delim("data/data.stat.txt", header=T)
@@ -15,6 +13,7 @@ h2o2  <- read.delim("data/data.h2o2.txt", header=T)
 
 require(ggplot2)
 require(colorspace)
+theme_set(theme_bw(base_size = 8))
 ```
 
 make data frames combining EI data
