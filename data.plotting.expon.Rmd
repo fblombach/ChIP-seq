@@ -434,6 +434,10 @@ plot.data("RNAPPr", "log10.RNA", axsym=F, Bd=T, heat=F)
 plot.data("RNAPBd", "log10.RNA", axsym=F, Bd=T, heat=F)
 plot.data("TFEb", "log10.RNA", axsym=F, Bd=T, heat=F)
 plot.data("TFB", "log10.RNA", axsym=F, Bd=T, heat=F)
+
+plot.data("EI_RNAP", "log10.RNA", axsym=F, Bd=T, heat=F)
+plot.data("EI_spt45", "log10.RNA", axsym=F, Bd=T, heat=F)
+plot.data("EI_elf1", "log10.RNA", axsym=F, Bd=T, heat=F)
 ```
 
 

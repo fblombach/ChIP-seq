@@ -5,10 +5,9 @@ date: "13/05/2019"
 output: html_document
 ---
 This script compares EI data between different growth phases
-```{r setup, include=FALSE}
+```{r setup}
 knitr::opts_chunk$set(echo = TRUE)
 expon <- read.delim("data/data.expon.txt", header=T)
-stat  <- read.delim("data/data.stat.txt", header=T)
 h2o2  <- read.delim("data/data.h2o2.txt", header=T)
 
 require(ggplot2)
@@ -18,10 +17,8 @@ theme_set(theme_bw(base_size = 8))
 
 make data frames combining EI data for the intersection of TUs in two data sets
 ```{r data frames with intersection of TUs between two conditions}
-expstat<-merge(expon[,c(1,11,13,19,21,23:31,36:37,39:40, 49, 55, 63)], stat[,c(1,11,13,19,21,23:31,36:37,39:40)], by.x="operon_id", by.y="operon_id", sort=F)
 exph2o2<-merge(expon[,c(1,11,13,19,21,23:31,36:37,39:40, 49, 55, 63)], h2o2[,c(1,11,13,19,21,23:31,36:37,39:40)], by.x="operon_id", by.y="operon_id", sort=F)
 
-print(nrow(expstat))
 print(nrow(exph2o2))
 ```
 
