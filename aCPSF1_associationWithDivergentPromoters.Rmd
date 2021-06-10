@@ -1,0 +1,105 @@
+---
+title: "aCPSF1 association with divergent promoter regions"
+author: "Fabian Blombach"
+date: "07/06/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#files with mapped TSSs and start codon positions for TUs without assigned TSS
+rRNA_TSS <- "../Genomes/Sso_NCBI/rRNA_TSS.bed"
+primTSS <- "../Genomes/Sso_NCBI/primaryTSS_Wurtzel_uniqueTUassigned.bed"
+startCodons <- "../Genomes/Sso_NCBI/GenesStartsTUsWithoutTSS.bed"
+
+#ChIP-seq peaks called for TFB and aCPSF1
+TFB_peaks <- "data/TFB1.expon.peaksIDR0.05.bed"
+aCPSF1_peaks <- "data/aCPSF1.expon.peaksIDR0.05.bed"
+
+Sys.setenv(TFB_peaks = TFB_peaks, aCPSF1_peaks = aCPSF1_peaks)
+
+require(ggplot2)
+```
+
+
+```{bash make temp folder}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+if [ -d temp ]; then rm -Rf temp; fi
+mkdir temp
+```
+
+This script identifies all intergenic regions with divergent promoters and tests their overlap with transcription termination factor aCPSF1 in order to check whether this factor is generally associated with promoter-proximal transcription elongation complexes. As control, we performed the same analysis for initiation factor TFB.
+
+```{r combine all TUs}
+#combine data
+allTUs <- rbind(read.table(rRNA_TSS), read.table(primTSS), read.table(startCodons))
+
+#sort based on genome position
+allTUs <- allTUs[order(allTUs$V2),]
+head(allTUs)
+```
+
+
+
+#identify divergent promoters with max distance of 250 bp between predicted TSSs
+```{r divergent promoters}
+diver<- data.frame()
+
+for (i in 1:(nrow(allTUs)-1)){
+if(allTUs[i,6] == "-" & allTUs[i+1,6] == "+" & allTUs[i+1,2] - allTUs[i,3] < 500)  
+{
+  diver = rbind(diver, allTUs[i,], allTUs[i+1,])
+}  
+}
+write.table(diver, "temp/divergentTSSs.bed", row.names=F, col.names=F, quote=F, sep="\t")
+
+#number of TSSs from divergent TUs
+```
+
+#Assigning closest divergent TSS position to ChIP-seq peaks
+```{bash test overlap}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+
+#assign TFB and aCPSF1 peaks to closest divergent TSSs
+bedtools sort -i $TFB_peaks | bedtools closest -d -a stdin -b temp/divergentTSSs.bed > temp/btWindow40.TFB.closest.bed
+
+bedtools sort -i $aCPSF1_peaks | bedtools closest -d -a stdin -b temp/divergentTSSs.bed > temp/btWindow40.aCPSF1.closest.bed
+```
+
+
+```{r data import}
+TFB.closest <- read.table("temp/btWindow40.TFB.closest.bed")
+aCPSF1.closest <- read.table("temp/btWindow40.aCPSF1.closest.bed")
+```
+
+```{r testing distance relationships}
+#merged data.frame in long format for all peaks < 200
+TFB.200bp <- TFB.closest$V12[TFB.closest$V12 <200]
+aCPSF1.200bp <- aCPSF1.closest$V12[aCPSF1.closest$V12 <200]
+closest.peaks <- data.frame(dist=c(TFB.200bp, aCPSF1.200bp), prot=as.factor(c(rep("TFB", times=length(TFB.200bp)), rep("aCPSF1", times=length(aCPSF1.200bp)))))
+
+
+#Overlaid histograms for all distances <= 200 bp
+theme_set(theme_bw(base_size = 8))
+
+h <- ggplot(closest.peaks, aes(x=dist, color=prot, fill=prot)) +
+     geom_histogram(alpha=0.2, position="identity", breaks=c(seq(0,200,by=10)))
+h<- h + scale_fill_manual(values=c("#664b4b", "#1F968B")) + 
+  scale_color_manual(values=c("#664b4b", "#1F968B")) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5))
+
+h
+ggplot2::ggsave("histogram_TFB_aCPSF1_distribution.pdf", plot = h, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+
+#How many peaks are within 200 bp distance
+sum(TFB.closest$V12 <=200)
+sum(aCPSF1.closest$V12 <=200)
+```
+
+
+
+
