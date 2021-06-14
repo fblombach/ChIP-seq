@@ -9,9 +9,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 #files with mapped TSSs and start codon positions for TUs without assigned TSS
-rRNA_TSS <- "../Genomes/Sso_NCBI/rRNA_TSS.bed"
-primTSS <- "../Genomes/Sso_NCBI/primaryTSS_Wurtzel_uniqueTUassigned.bed"
-startCodons <- "../Genomes/Sso_NCBI/GenesStartsTUsWithoutTSS.bed"
+rRNA_TSS <- "genome_data/rRNA_TSS.bed"
+primTSS <- "genome_data/primaryTSS_Wurtzel_uniqueTUassigned.bed"
+startCodons <- "genome_data/GenesStartsTUsWithoutTSS.bed"
 
 #ChIP-seq peaks called for TFB and aCPSF1
 TFB_peaks <- "data/TFB1.expon.peaksIDR0.05.bed"
