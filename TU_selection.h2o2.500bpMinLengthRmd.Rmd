@@ -1,0 +1,236 @@
+---
+title: "TU_selection"
+author: "Fabian Blombach"
+date: "17/03/2019"
+output: html_document
+---
+This script selects transcription units (TUs) with the following criteria for two biological replicates:  
+- mapped TSS data from Wurtzel et al. (2009) are used when available, otherwise the start codon is used as proxy for the TSS  
+- assigned to TFB and TFEb peaks with biunique correspondence  
+- minimum length of 500 bp   
+- a minimum coverage of 20 reads in the chromatin input files for the relevant region  
+- no TU-internal TFB peaks indicating gene-internal or anti-sense promoters  
+- a minimum 1.5-fold increase in Spt4/5 signal within 150 bp upstream of TSS  
+
+The deeptools package needs to be installed!
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+
+# list of connections to external files
+#ChIP-seq peak calling data
+TFB_peaks <-  "data/TFB1.H2O2.peaksIDR0.05.bed"
+TFEb_peaks <- "data/TFEb.H2O2.peaksIDR0.05.bed"
+
+#genome annotations
+rRNA_TSS <- "genome_data/rRNA_TSS.bed"
+primTSS <- "genome_data//primaryTSS_Wurtzel_uniqueTUassigned.bed"
+startCodons <- "genome_data/GenesStartsTUsWithoutTSS.bed"
+operons<-read.delim("genome_data/Wurtzel_allTUs.txt", header=T, sep="\t")
+
+#peak calling data for TFB non-template strand ChIP-exo
+TSS.adjust<-read.table("data/adjust.TSS.txt", header=T)
+TSS.adjust$operon_id<-as.character(TSS.adjust$operon_id)
+TSS.adjust$shift<-as.numeric(as.character(TSS.adjust$shift))
+
+
+#ChIP-seq data
+#data available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141286
+#path to directory where data are stored
+mydir<-("../GSE141290/")
+spt45_r1 <- paste0(mydir, "GSM4192702_Spt45_H2O2_r1.normRatio.bw")
+spt45_r2 <- paste0(mydir, "GSM4192703_Spt45_H2O2_r2.normRatio.bw")
+inputCov_r1 <-paste0(mydir, "GSM4192714_input.H2O2_r1.Coverage.bw")
+inputCov_r2 <-paste0(mydir, "GSM4192715_input.H2O2_r2.Coverage.bw")
+
+phase = "h2o2"
+
+Sys.setenv(phase = phase,
+           TFB_peaks = TFB_peaks, 
+           TFEb_peaks = TFEb_peaks, 
+           rRNA_TSS = rRNA_TSS, 
+           primTSS = primTSS,
+           startCodons = startCodons, 
+           spt45_r1 = spt45_r1, 
+           spt45_r2 = spt45_r2,
+           inputCov_r1 = inputCov_r1, 
+           inputCov_r2 = inputCov_r2)
+
+```
+
+```{bash matching TFB and TFEb peaks to TSSs}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+mkdir temp
+#merge TFB and TFEb peaks
+bedtools window -w 40 -a $TFB_peaks -b $TFEb_peaks > temp/btWindow40.TFB1.TFEb."$phase"_IDR0.05.bed
+
+#assign TFB/TFEb peaks to TSS and start codons
+bedtools window -w 40 -a temp/btWindow40.TFB1.TFEb."$phase"_IDR0.05.bed -b $startCodons > temp/btWindow40.TFB1.TFEb."$phase".startCodonsTUsWithoutTSS.bed
+
+bedtools window -w 40 -a temp/btWindow40.TFB1.TFEb."$phase"_IDR0.05.bed -b $primTSS > temp/btWindow40.TFB1.TFEb."$phase".primTSS_uniqueAssigned.bed
+
+bedtools window -w 40 -a temp/btWindow40.TFB1.TFEb."$phase"_IDR0.05.bed -b $rRNA_TSS > temp/btWindow40.TFB1.TFEb."$phase".rRNA_TSS.bed
+```
+
+
+```{r filter for biunique assignment of peaks to TSSs}
+# control for biunique assigment of peaks to each other
+peaks<-read.table(paste0("temp/btWindow40.TFB1.TFEb.",phase,"_IDR0.05.bed"))
+nonuniqueTFB<- peaks[duplicated(peaks$V4),]
+nonuniqueTFEb<- peaks[duplicated(peaks$V9),]
+
+data.AUG<- read.table(paste0("temp/btWindow40.TFB1.TFEb.", phase, ".startCodonsTUsWithoutTSS.bed"))
+data.TSS <- read.table(paste0("temp/btWindow40.TFB1.TFEb.", phase, ".primTSS_uniqueAssigned.bed"))
+data.rRNA<- read.table(paste0("temp/btWindow40.TFB1.TFEb.", phase, ".rRNA_TSS.bed"))
+data.rRNA$V14<-c("ID_669")
+data.AUG$V14<-sub("operon", "ID", data.AUG$V14)
+data.all<- rbind(data.AUG, data.TSS, data.rRNA)
+# NOTE: "invalid factor level, NA generated" message for score column (5th) for TSS, ignore!
+data.u<- data.all[as.numeric(setdiff(row.names(data.all), row.names(subset(
+  data.all, duplicated(V4, fromLast=F)| duplicated(V4, fromLast=T))))),]
+data.u<-data.u[order(data.u$V12),]
+data.u$V15 <- rep(".", nrow(data.u))
+#filter any nonuniquely paired TFB or TFEb peaks from data.u
+data.u<-subset(data.u,  !(V4 %in% nonuniqueTFB$V4)  & !(V9 %in% nonuniqueTFEb$V9))
+
+# calculate TU length for each operon ID, based on Wurtzel data for gene start, end and primary TSS and Operon ID assignment
+opCoord<- data.frame(operon_ID=c(paste0(rep("ID_", 2232), 1:2232)), start=(rep(0, 2232)), end=(rep(0,2232))) 
+for (i in 1:2232) { start<- min(subset(operons, operon_ID == i)[,c(1,8)], na.rm=T);
+end<-max(subset(operons, operon_ID == i)[,c(2,8)], na.rm=T);
+opCoord[i,2]<-start;
+opCoord[i,3]<-end
+}
+opCoord$length<- opCoord$end - opCoord$start
+data.u<-merge(data.u, opCoord[,c(1,4)], by.x="V14", by.y="operon_ID")
+#check number of TUs above minimum length
+nrow(subset(data.u, length>=500))
+#export bed file with coord for all TSS and start codons to calculate coverage data
+write.table(data.u[,c(12:14,1,15:16)], paste0("temp/TSSvATG.uniqueTFBvTFEbOccup.", phase, ".bed"), sep="\t", row.names=F, col.names=F, quote=F)
+# calculate minimum coverage for entire interval (-250 to 500) and count TUs that pass >20 coverage
+nrows<-nrow(data.u)
+print(nrows)
+print(nrow(data.u))
+Sys.setenv(nrows = nrows)
+```
+
+Calculate and import coverage data for -250 to +500 interval from deeptools computeMatrix reference-point -bs 1 for both replicates
+```{bash calculating chip-seq coverage data}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+
+#calculate input coverage
+computeMatrix reference-point --sortRegions keep -bs 1 -a 500 -b 250 -R temp/TSSvATG.uniqueTFBvTFEbOccup."$phase".bed -S $inputCov_r1 $inputCov_r2  -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
+rm temp/trashme.npz;
+head -n 2 temp/trashme.tab > temp/inputCoverage."$phase".tab; 
+tail -n $nrows temp/trashme.tab >> temp/inputCoverage."$phase".tab; rm temp/trashme.tab
+
+#calculate spt45 coverage
+computeMatrix reference-point --sortRegions keep -bs 1 -a 150 -b 150 -R temp/TSSvATG.uniqueTFBvTFEbOccup."$phase".bed -S $spt45_r1 $spt45_r2 -o temp/trashme2.npz --outFileNameMatrix temp/trashme2.tab;
+rm temp/trashme2.npz;
+head -n 2 temp/trashme2.tab > temp/spt45Coverage."$phase".tab; 
+tail -n $nrows temp/trashme2.tab >> temp/spt45Coverage."$phase".tab; rm temp/trashme2.tab
+
+#count TFB peaks in TU
+bedtools window -l 40  -r 500 -sw -c  -a temp/TSSvATG.uniqueTFBvTFEbOccup."$phase".bed -b $TFB_peaks > temp/TSSvATG.uniqueTFBvTFEbOccup.TU500."$phase".intTFB1PeakCount.bed
+```
+
+```{r chip-seq data import}
+cov <- read.table(paste0("temp/inputCoverage.", phase, ".tab"), sep="\t", header=F)
+spt45cov<-read.table(paste0("temp/spt45Coverage.", phase, ".tab"), sep="\t", header=F)
+TFBcount<- read.table(paste0("temp/TSSvATG.uniqueTFBvTFEbOccup.TU500.", phase, ".intTFB1PeakCount.bed"), sep="\t", header=F)
+data.u$r1.minCovFull <- do.call(pmin, cov[,1:750])
+data.u$r2.minCovFull <- do.call(pmin, cov[,751:1500])
+```
+fraction of TUs > 500 bp
+```{r echo=FALSE}
+print(nrow(subset(data.u, length >=500))/nrows)
+```
+fraction of TUs with coverage min >20 bp
+```{r echo=FALSE}
+print(nrow(subset(data.u, r1.minCovFull >20 & r2.minCovFull >20))/nrows)
+```
+fraction of TUs with sufficient Spt4/5 signal increase
+```{r fraction with 1.5x Spt4/5 increase}
+print(nrow(data.u[(spt45cov[,151]/spt45cov[,1]) >1.5 & (spt45cov[,451]/spt45cov[,301]) >1.5,])/nrows)
+```
+fraction of TUs without internal TFB peaks
+```{r fraction without internal TFB}
+print(nrow(data.u[TFBcount$V7 == 1,])/nrows)
+```
+filter dataset for TUs matching all criteria
+```{r applying all filters}
+data.u500f<-subset(data.u,r1.minCovFull >20 & 
+                          r2.minCovFull >20 &
+                          length >=500 &     
+                          TFBcount$V7 == 1 &
+                          (spt45cov[,151]/spt45cov[,1]) > 1.5 & 
+                          (spt45cov[,451]/spt45cov[,301]) > 1.5)
+#removal of TUs with no clear peak in TFB ChIP-exo, possibly implying multiple TSSs for the TU
+data.u500f<-data.u500f[!(data.u500f$V14 %in% TSS.adjust[is.na(TSS.adjust$shift),1]),]
+
+```
+
+fraction of TUs that passes filtering
+```{r fraction TUs passing all filters}
+print(nrow(data.u500f)/nrows)
+```
+
+number of TUs that passes filtering
+```{r number TUs passing all filters}
+print(nrow(data.u500f))
+```
+
+```{r data export}
+write.table(data.u500f[order(data.u500f$V5, decreasing = T),c(12:14,1,15:16)], paste0("TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.", phase,".bed"), sep="\t", row.names=F, col.names=F, quote=F)
+
+# creating bed files with subsets of the final data set with mapped TSS (TSS & rRNA promoters) and those based on start codons (AUG)
+data.TSSrRNA.u500f<-subset(data.u500f, V14 %in% setdiff(data.u500f$V14, data.AUG$V14))
+#reorder based on TFB occupancy
+data.TSSrRNA.u500f <- data.TSSrRNA.u500f[order(data.TSSrRNA.u500f$V5, decreasing = T),]
+write.table(data.TSSrRNA.u500f[order(data.TSSrRNA.u500f$V5, decreasing = T),c(12:14,1,15:16)], paste0("TSS.uniqueTFBvTFEbOccup.TU500.intTFBfilt.", phase,".bed"), sep="\t", row.names=F, col.names=F, quote=F)
+data.AUG.u500f<-subset(data.u500f, V14 %in% setdiff(data.u500f$V14, data.TSSrRNA.u500f$V14))
+#reorder based on TFB occupancy
+data.AUG.u500f<-data.AUG.u500f[order(data.AUG.u500f$V5, decreasing = T),]
+write.table(data.AUG.u500f[,c(12:14,1,15:16)], paste0("AUG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.",phase,".bed"), sep="\t", row.names=F, col.names=F, quote=F)
+
+
+
+```
+
+
+#Correction of predicted TSSs based on TFB ChIP-exo for TUs without TSS mapping data
+```{r correction of predicted TSSs for }
+#filter out dropped lines
+data.AUG.u500f.adj<-data.AUG.u500f[,c(12:14,1,15:16)]
+data.u500f.adj<-data.u500f[,c(12:14,1,15:16)]
+#adjust TSS positions
+y<-c(rep(0, nrow(data.AUG.u500f.adj)))
+for (i in 1:nrow(data.AUG.u500f.adj)) {
+  x<-ifelse(data.AUG.u500f.adj[i,4] %in% TSS.adjust$operon_id, ifelse(
+            data.AUG.u500f.adj[i,6]=="+",
+            data.AUG.u500f.adj[i,2] - TSS.adjust[TSS.adjust$operon_id==data.AUG.u500f.adj[i,4],2], 
+            data.AUG.u500f.adj[i,2] + TSS.adjust[TSS.adjust$operon_id==data.AUG.u500f.adj[i,4],2]),
+            data.AUG.u500f.adj[i,2])
+  y[i]<-x
+}
+data.AUG.u500f.adj[,2]<-y
+data.AUG.u500f.adj[,3]<-y+1
+write.table(data.AUG.u500f.adj, paste0("AUG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.",phase,".adj.bed"), sep="\t", row.names=F, col.names=F, quote=F)
+
+z<-c(rep(0, nrow(data.u500f.adj)))
+for (i in 1:nrow(data.u500f.adj)) {
+  x<-ifelse(data.u500f.adj[i,4] %in% TSS.adjust$operon_id, ifelse(
+    data.u500f.adj[i,6]=="+",
+    data.u500f.adj[i,2] - TSS.adjust[TSS.adjust$operon_id==data.u500f.adj[i,4],2], 
+    data.u500f.adj[i,2] + TSS.adjust[TSS.adjust$operon_id==data.u500f.adj[i,4],2]),
+    data.u500f.adj[i,2])
+  z[i]<-x
+}
+data.u500f.adj[,2]<-z
+data.u500f.adj[,3]<-z+1
+write.table(data.u500f.adj, paste0("TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.",phase,".adj.bed"), sep="\t", row.names=F, col.names=F, quote=F)
+```
+
+```{bash}
+rm -r temp
+```
