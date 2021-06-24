@@ -1,0 +1,456 @@
+---
+title: "elongationFactorRecruitment"
+author: "Fabian Blombach"
+date: "31/03/2019"
+output: html_document
+---
+
+The deeptools package needs to be installed!
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+require(ggplot2)
+require(gplots)
+require(cowplot)
+require(viridis)
+require(MASS)
+# set growth phase
+phase<-c("expon")
+# list of connections to external files
+TSS <- "genome_data/TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.expon.adj.bed"
+
+#define directory where NCBI GEO data for superseries GSE141290 are stored
+mydir <- "../GSE141290/"
+
+cpsf1_r1 <- paste0(mydir, "/GSM4200375_CPSF1_expon_r1.normRatio.bw")
+cpsf1_r2 <- paste0(mydir, "/GSM4200376_CPSF1_expon_r2.normRatio.bw")
+spt45_r1 <- paste0(mydir, "/GSM4200371_Spt45_expon_r1.normRatio.bw")
+spt45_r2 <- paste0(mydir, "/GSM4200372_Spt45_expon_r2.normRatio.bw")
+elf1_r1 <-  paste0(mydir, "/GSM4200373_Elf1_expon_r1.normRatio.bw")
+elf1_r2 <-  paste0(mydir, "/GSM4200374_Elf1_expon_r2.normRatio.bw")
+rpo47_r1 <-    paste0(mydir, "/GSM4200369_Rpo47_expon_r1.normRatio.bw")
+rpo47_r2 <-    paste0(mydir, "/GSM4200370_Rpo47_expon_r2.normRatio.bw")
+
+#list of TUs that will be included
+TUs <- read.table(file=TSS)[,4]
+TUs <- as.character(TUs)
+nrows <- length(TUs)
+EI_data <- read.delim("data/data.expon.txt")
+
+Sys.setenv(phase = phase, TSS = TSS, spt45_r1 = spt45_r1, spt45_r2 = spt45_r2,
+rpo47_r1 = rpo47_r1, rpo47_r2 = rpo47_r2, elf1_r1 = elf1_r1, elf1_r2 = elf1_r2, cpsf1_r1 = cpsf1_r1, cpsf1_r2 = cpsf1_r2,nrows=nrows)
+```
+
+calculate coverage data with computeMatrix (deeptools)
+```{bash computeMatrix}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+mkdir temp
+#calculate coverage
+computeMatrix reference-point --sortRegions keep -bs 1 -a 500 -b 100 -R $TSS -S $rpo47_r1 $rpo47_r2 $spt45_r1 $spt45_r2 $elf1_r1 $elf1_r2 $cpsf1_r1 $cpsf1_r2 -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
+rm temp/trashme.npz;
+head -n 2 temp/trashme.tab > temp/coverage.tab; 
+tail -n $nrows temp/trashme.tab >> temp/coverage.tab; rm temp/trashme.tab;
+```
+
+Import data and calculate average occupancy.
+Every data set consists of 600 bins
+```{r data import}
+cov<-read.table("temp/coverage.tab")
+cov[is.na(cov)] <- 0
+
+#match order of EI data table to TSS file
+EI_data<-EI_data[match(TUs, EI_data$operon_id),]
+
+#remove ribosomal promoter as it will be outlier 
+#TSSbed<-read.table(TSS)
+#cov<-cov[TSSbed$V4 != "ID_669",]
+```
+
+Filtering for high escape ratio TUs
+```{r}
+EI_RNAP<-EI_data$EI_RNAPmean
+
+# filtering out TUs with low escape
+filtered.TUs4 <- EI_RNAP > (-1)
+table(filtered.TUs4)
+n<-table(filtered.TUs4)[2]
+
+Elf1_r1_highEI <- log(cov[filtered.TUs4,2401:3000],2) - log(EI_data[filtered.TUs4,]$RNAP1_body,2)
+Elf1_r2_highEI <- log(cov[filtered.TUs4,3001:3600],2) - log(EI_data[filtered.TUs4,]$RNAP2_body,2)
+Spt45_r1_highEI <- log(cov[filtered.TUs4,1201:1800],2) - log(EI_data[filtered.TUs4,]$RNAP1_body,2)
+Spt45_r2_highEI <- log(cov[filtered.TUs4,1801:2400],2) - log(EI_data[filtered.TUs4,]$RNAP2_body,2)
+cpsf1_r1_highEI <- log(cov[filtered.TUs4,3601:4200],2) - log(EI_data[filtered.TUs4,]$RNAP1_body,2)
+cpsf1_r2_highEI <- log(cov[filtered.TUs4,4201:4800],2) - log(EI_data[filtered.TUs4,]$RNAP2_body,2)
+RNAP1_highEI <- log(cov[filtered.TUs4,1:600],2)  - log(EI_data[filtered.TUs4,]$RNAP1_body,2)
+RNAP2_highEI <- log(cov[filtered.TUs4,601:1200],2)  - log(EI_data[filtered.TUs4,]$RNAP2_body,2)
+
+stat.elf1_r1_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Elf1_r1_highEI,2, mean), 
+                             apply(Elf1_r1_highEI, 2, sd))
+colnames(stat.elf1_r1_highEI)<-c("pos", "mean", "sd")
+stat.elf1_r2_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Elf1_r2_highEI,2, mean), 
+                             apply(Elf1_r2_highEI, 2, sd))
+colnames(stat.elf1_r2_highEI)<-c("pos", "mean", "sd")
+
+stat.spt45_r1_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Spt45_r1_highEI,2, mean),  
+                             apply(Spt45_r1_highEI, 2, sd))
+colnames(stat.spt45_r1_highEI)<-c("pos", "mean", "sd")
+stat.spt45_r2_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Spt45_r2_highEI,2, mean),
+                             apply(Spt45_r2_highEI, 2, sd))
+colnames(stat.spt45_r2_highEI)<-c("pos", "mean", "sd")
+
+stat.cpsf1_r1_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(cpsf1_r1_highEI, 2, mean), 
+                             apply(cpsf1_r1_highEI, 2, sd))
+colnames(stat.cpsf1_r1_highEI)<-c("pos", "mean", "sd")
+stat.cpsf1_r2_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(cpsf1_r2_highEI, 2, mean), 
+                             apply(cpsf1_r2_highEI, 2, sd))
+colnames(stat.cpsf1_r2_highEI)<-c("pos", "mean", "sd")
+
+stat.RNAP1_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(RNAP1_highEI, 2, mean), 
+                             apply(RNAP1_highEI, 2, sd))
+colnames(stat.RNAP1_highEI)<-c("pos", "mean", "sd")
+stat.RNAP2_highEI <- data.frame(seq(-99, 500, by=1),
+                             apply(RNAP2_highEI, 2, mean), 
+                             apply(RNAP2_highEI, 2, sd))
+colnames(stat.RNAP2_highEI)<-c("pos", "mean", "sd")
+
+```
+
+plot high escape repl1
+```{r Plots high escape r1}
+g_RNAP.highEI_r1 <- ggplot(data=stat.RNAP1_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="black") +
+  geom_line(size=1, colour="black")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Spt45.highEI_r1 <- ggplot(data=stat.spt45_r1_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#453781") +
+  geom_line(size=1, colour="#453781")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Elf1.highEI_r1 <- ggplot(data=stat.elf1_r1_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#C05F98") +
+  geom_line(size=1, colour="#C05F98")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_CPSF1.highEI_r1 <- ggplot(data=stat.cpsf1_r1_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#664b4b") +
+  geom_line(size=1, colour="#664b4b")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+plots.highEI_r1<-plot_grid(g_RNAP.highEI_r1, g_Spt45.highEI_r1, g_Elf1.highEI_r1, g_CPSF1.highEI_r1, ncol=1, align="v")
+
+plots.highEI_r1
+
+save_plot(paste0("ElongationFactorRecruitment.", phase, "highEI.logTransf.overlay.n",n,".withCPSF1.r1.pdf"), 
+          plots.highEI_r1,base_height=4, base_width=4)
+```
+
+plot high escape repl2
+```{r Plots high escape r2}
+g_RNAP.highEI_r2 <- ggplot(data=stat.RNAP2_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="black") +
+  geom_line(size=1, colour="black")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Spt45.highEI_r2 <- ggplot(data=stat.spt45_r2_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#453781") +
+  geom_line(size=1, colour="#453781")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Elf1.highEI_r2 <- ggplot(data=stat.elf1_r2_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#C05F98") +
+  geom_line(size=1, colour="#C05F98")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_CPSF1.highEI_r2 <- ggplot(data=stat.cpsf1_r2_highEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#664b4b") +
+  geom_line(size=1, colour="#664b4b")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-3.5, 1.5),position = "right", breaks=c(-3, -2, -1, 0, 1, 2), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+plots.highEI_r2<-plot_grid(g_RNAP.highEI_r2, g_Spt45.highEI_r2, g_Elf1.highEI_r2, g_CPSF1.highEI_r2, ncol=1, align="v")
+
+plots.highEI_r2
+
+save_plot(paste0("ElongationFactorRecruitment.", phase, "highEI.logTransf.overlay.n",n,".withCPSF1.r2.pdf"), 
+          plots.highEI_r2,base_height=4, base_width=4)
+```
+
+
+
+```{r}
+# filtering out TUs with high escape
+filtered.TUs5 <- EI_RNAP < (-2.5)
+table(filtered.TUs5)
+n<-table(filtered.TUs5)[2]
+
+Elf1_r1_lowEI <- log(cov[filtered.TUs5,2401:3000],2) - log(EI_data[filtered.TUs5,]$RNAP1_body,2)
+Elf1_r2_lowEI <- log(cov[filtered.TUs5,3001:3600],2) - log(EI_data[filtered.TUs5,]$RNAP2_body,2)
+Spt45_r1_lowEI <- log(cov[filtered.TUs5,1201:1800],2) - log(EI_data[filtered.TUs5,]$RNAP1_body,2)
+Spt45_r2_lowEI <- log(cov[filtered.TUs5,1801:2400],2) - log(EI_data[filtered.TUs5,]$RNAP2_body,2)
+cpsf1_r1_lowEI <- log(cov[filtered.TUs5,3601:4200],2) - log(EI_data[filtered.TUs5,]$RNAP1_body,2)
+cpsf1_r2_lowEI <- log(cov[filtered.TUs5,4201:4800],2) - log(EI_data[filtered.TUs5,]$RNAP2_body,2)
+RNAP1_lowEI <- log(cov[filtered.TUs5,1:600],2)  - log(EI_data[filtered.TUs5,]$RNAP1_body,2)
+RNAP2_lowEI <- log(cov[filtered.TUs5,601:1200],2)  - log(EI_data[filtered.TUs5,]$RNAP2_body,2)
+
+#Filter for zero occupancy data (resulting in -Inf values)
+Elf1_r1_lowEI.f <- Elf1_r1_lowEI[rowSums(Elf1_r1_lowEI) + rowSums(Spt45_r1_lowEI) + rowSums(RNAP1_lowEI) + rowSums(cpsf1_r1_lowEI) != -Inf,]
+Elf1_r2_lowEI.f <- Elf1_r2_lowEI[rowSums(Elf1_r2_lowEI) + rowSums(Spt45_r2_lowEI) + rowSums(RNAP2_lowEI) + rowSums(cpsf1_r2_lowEI) != -Inf,]
+Spt45_r1_lowEI.f <- Spt45_r1_lowEI[rowSums(Elf1_r1_lowEI) + rowSums(Spt45_r1_lowEI) + rowSums(RNAP1_lowEI) + rowSums(cpsf1_r1_lowEI) != -Inf,]
+Spt45_r2_lowEI.f <- Spt45_r2_lowEI[rowSums(Elf1_r2_lowEI) + rowSums(Spt45_r2_lowEI) + rowSums(RNAP2_lowEI) + rowSums(cpsf1_r2_lowEI) != -Inf,]
+cpsf1_r1_lowEI.f <- cpsf1_r1_lowEI[rowSums(Elf1_r1_lowEI) + rowSums(Spt45_r1_lowEI) + rowSums(RNAP1_lowEI) + rowSums(cpsf1_r1_lowEI) != -Inf,]
+cpsf1_r2_lowEI.f <- cpsf1_r2_lowEI[rowSums(Elf1_r2_lowEI) + rowSums(Spt45_r2_lowEI) + rowSums(RNAP2_lowEI) + rowSums(cpsf1_r2_lowEI) != -Inf,]
+RNAP1_lowEI.f <- RNAP1_lowEI[rowSums(Elf1_r1_lowEI) + rowSums(Spt45_r1_lowEI) + rowSums(RNAP1_lowEI) + rowSums(cpsf1_r1_lowEI) != -Inf,]
+RNAP2_lowEI.f <- RNAP2_lowEI[rowSums(Elf1_r2_lowEI) + rowSums(Spt45_r2_lowEI) + rowSums(RNAP2_lowEI) + rowSums(cpsf1_r2_lowEI) != -Inf,]
+
+stat.elf1_r1_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Elf1_r1_lowEI.f,2, mean), 
+                             apply(Elf1_r1_lowEI.f, 2, sd))
+colnames(stat.elf1_r1_lowEI)<-c("pos", "mean", "sd")
+stat.elf1_r2_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Elf1_r2_lowEI.f,2, mean), 
+                             apply(Elf1_r2_lowEI.f, 2, sd))
+colnames(stat.elf1_r2_lowEI)<-c("pos", "mean", "sd")
+stat.spt45_r1_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Spt45_r1_lowEI.f,2, mean),  
+                             apply(Spt45_r1_lowEI.f, 2, sd))
+colnames(stat.spt45_r1_lowEI)<-c("pos", "mean", "sd")
+stat.spt45_r2_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(Spt45_r2_lowEI.f,2, mean),
+                             apply(Spt45_r2_lowEI.f, 2, sd))
+colnames(stat.spt45_r2_lowEI)<-c("pos", "mean", "sd")
+stat.cpsf1_r1_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(cpsf1_r1_lowEI.f,2, mean),  
+                             apply(cpsf1_r1_lowEI.f, 2, sd))
+colnames(stat.cpsf1_r1_lowEI)<-c("pos", "mean", "sd")
+stat.cpsf1_r2_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(cpsf1_r2_lowEI.f,2, mean),
+                             apply(cpsf1_r2_lowEI.f, 2, sd))
+colnames(stat.cpsf1_r2_lowEI)<-c("pos", "mean", "sd")
+
+
+stat.RNAP1_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(RNAP1_lowEI.f, 2, mean), 
+                             apply(RNAP1_lowEI.f, 2, sd))
+colnames(stat.RNAP1_lowEI)<-c("pos", "mean", "sd")
+stat.RNAP2_lowEI <- data.frame(seq(-99, 500, by=1),
+                             apply(RNAP2_lowEI.f, 2, mean), 
+                             apply(RNAP2_lowEI.f, 2, sd))
+colnames(stat.RNAP2_lowEI)<-c("pos", "mean", "sd")
+```
+
+plot high escape repl1
+```{r Plots low escape r1}
+g_RNAP.lowEI_r1 <- ggplot(data=stat.RNAP1_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="black") +
+  geom_line(size=1, colour="black")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+ scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Spt45.lowEI_r1 <- ggplot(data=stat.spt45_r1_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#453781") +
+  geom_line(size=1, colour="#453781")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+   scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Elf1.lowEI_r1 <- ggplot(data=stat.elf1_r1_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#C05F98") +
+  geom_line(size=1, colour="#C05F98")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_CPSF1.lowEI_r1 <- ggplot(data=stat.cpsf1_r1_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#664b4b") +
+  geom_line(size=1, colour="#664b4b")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+ scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+plots.lowEI_r1<-plot_grid(g_RNAP.lowEI_r1, g_Spt45.lowEI_r1, g_Elf1.lowEI_r1, g_CPSF1.lowEI_r1, ncol=1, align="v")
+
+plots.lowEI_r1
+
+save_plot(paste0("ElongationFactorRecruitment.", phase, "lowEI.logTransf.overlay.n",n,".withCPSF1.r1.pdf"), 
+          plots.lowEI_r1,base_height=4, base_width=4)
+```
+
+plot low escape repl2
+```{r Plots low escape r2}
+g_RNAP.lowEI_r2 <- ggplot(data=stat.RNAP2_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="black") +
+  geom_line(size=1, colour="black")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+   scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Spt45.lowEI_r2 <- ggplot(data=stat.spt45_r2_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#453781") +
+  geom_line(size=1, colour="#453781")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_Elf1.lowEI_r2 <- ggplot(data=stat.elf1_r2_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#C05F98") +
+  geom_line(size=1, colour="#C05F98")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+g_CPSF1.lowEI_r2 <- ggplot(data=stat.cpsf1_r2_lowEI, aes(x=pos, y=mean)) + 
+  geom_ribbon(aes(ymax=mean + sd, ymin= ifelse(mean - sd > -3.5,mean - sd,-3.5)), alpha=0.4, fill="#664b4b") +
+  geom_line(size=1, colour="#664b4b")  +      
+  theme_bw() + 
+  scale_x_continuous(limits=c(-99, 500), breaks=c(1,200,400), expand = c(0, 0)) + 
+  scale_y_continuous(limits=c(-1.5, 5),position = "right", breaks=c(-1,0, 1, 2, 3, 4), expand = c(0, 0)) +
+    theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(),  
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_vline(xintercept=1, lty=3) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank())
+
+plots.lowEI_r2<-plot_grid(g_RNAP.lowEI_r2, g_Spt45.lowEI_r2, g_Elf1.lowEI_r2, g_CPSF1.lowEI_r2, ncol=1, align="v")
+
+plots.lowEI_r2
+
+save_plot(paste0("ElongationFactorRecruitment.", phase, "lowEI.logTransf.overlay.n",n,".withCPSF1.r2.pdf"), 
+          plots.lowEI_r2,base_height=4, base_width=4)
+```
+
+```{bash}
+rm -r temp
+```
+
