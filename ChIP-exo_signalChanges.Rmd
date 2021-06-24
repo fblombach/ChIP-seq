@@ -1,0 +1,197 @@
+---
+title: "ChIP-exo signal changes for the PIC between exponential growth and oxidative stress"
+author: "Fabian Blombach"
+date: "23/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#S. solfataricus genome sequence
+genomeFasta <- "genome_data/NC_002754.fna"
+
+
+#precaclulated escape index calculations 
+expon <- read.delim("data/data.expon.txt")
+h2o2 <- read.delim("data/data.h2o2.txt")
+
+#TSS coordinates
+TSS.h2o2 <- "genome_data/TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.H2O2.adj.bed"
+TSS.expon <- "genome_data/TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.expon.adj.bed"
+
+#ChIP-exo data available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141286
+#path to directory where data are stored
+mydir<-("../GSE141290/")
+tfbFW_h2o2<- paste0(mydir, "GSE141288_TFB_exo_H2O2_GM_Forward.bw")
+tfbRV_h2o2<- paste0(mydir, "GSE141288_TFB_exo_H2O2_GM_Reverse.bw")
+tfbFW_expon<- paste0(mydir, "GSE141289_TFB_exo_expon_GM_Forward.bw")
+tfbRV_expon<- paste0(mydir, "GSE141289_TFB_exo_expon_GM_Reverse.bw")
+
+rnapFW_h2o2<- paste0(mydir, "GSE141288_Rpo47_exo_H2O2_GM_Forward.bw")
+rnapRV_h2o2<- paste0(mydir, "GSE141288_Rpo47_exo_H2O2_GM_Reverse.bw")
+rnapFW_expon<- paste0(mydir, "GSE141289_Rpo47_exo_expon_GM_Forward.bw")
+rnapRV_expon<- paste0(mydir, "GSE141289_Rpo47_exo_expon_GM_Reverse.bw")
+
+Sys.setenv(tfbFW_h2o2=tfbFW_h2o2, tfbRV_h2o2=tfbRV_h2o2,
+           tfbFW_expon=tfbFW_expon, tfbRV_expon=tfbRV_expon,
+           rnapFW_h2o2=rnapFW_h2o2, rnapRV_h2o2=rnapRV_h2o2,
+           rnapFW_expon=rnapFW_expon, rnapRV_expon=rnapRV_expon
+           )
+```
+
+
+```{bash}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+mkdir temp
+```
+
+
+```{r intersection expon and h2o2 stress}
+TSS.h2o2.bed <- read.table(TSS.h2o2)
+TSS.expon.bed <- read.table(TSS.expon)
+TSS.inter <- TSS.expon.bed[TSS.expon.bed$V4 %in% intersect(TSS.expon.bed$V4, TSS.h2o2.bed$V4),]
+
+
+write.table(TSS.inter, "temp/TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.intersect.adj.bed", quote=F, row.names=F, col.names=F, sep="\t")
+
+nrows = nrow(TSS.inter)
+Sys.setenv(nrows = nrows)
+```
+
+```{bash ChIP-exo occupancy}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+
+computeMatrix reference-point -a 20 -b 30 -bs 1 \
+-R temp/TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.intersect.adj.bed \
+--sortRegions keep \
+-S $tfbFW_h2o2 $tfbRV_h2o2 $tfbFW_expon $tfbRV_expon $rnapFW_h2o2 $rnapRV_h2o2 $rnapFW_expon $rnapRV_expon -o ../temp/trashme.npz --outFileNameMatrix ../temp/trashme.tab
+rm ../temp/trashme.npz;
+head -n 2 ../temp/trashme.tab > ../temp/coverage.tab; 
+tail -n $nrows ../temp/trashme.tab >> ../temp/coverage.tab; rm ../temp/trashme.tab;
+
+```
+
+
+```{r data import ChIP-exo}
+cov <- read.table("../temp/coverage.tab")
+cov[is.na(cov)]<- 0
+#splitting matrix by condition and orientation (non-template vs template strand)
+#first define window size used in computeMatrix
+ws = 50
+#loop to split data set and sort by strand orientation of the TSS
+cond.v<-c("tfb.h2o2", "tfb.expon", "rnap.h2o2", "rnap.expon")
+  for (j in 1:length(cond.v)){
+    shift<-(j-1)*2*ws
+    NTS <- matrix(data=NA, nrow=nrows, ncol=ws)
+    TS <- matrix(data=NA, nrow=nrows, ncol=ws)
+    for (i in 1:nrows){
+      if(TSS.inter$V6[i] == "+"){
+          NTS[i,]<-unlist(cov[i,shift+1:ws])
+          TS[i,]<-unlist(cov[i,shift+50+1:ws])
+      }
+      if(TSS.inter$V6[i] == "-"){
+          NTS[i,]<-unlist(cov[i,shift+50+1:ws])
+          TS[i,]<-unlist(cov[i,shift+1:ws])
+      }
+    }
+    assign(paste0("exo.", cond.v[j], "_NTS"), NTS)
+    assign(paste0("exo.", cond.v[j], "_TS"), TS)
+  }
+
+```
+
+```{r QC heatmaps}
+require(gplots)
+#exo NTS
+heatmap.2(as.matrix(exo.tfb.expon_NTS), Rowv=F, Colv=F, key=T, trace="none", dendrogram="none", main="TFB exo expon NTS", scale="row")
+heatmap.2(as.matrix(exo.tfb.h2o2_NTS), Rowv=F, Colv=F, key=T, trace="none", dendrogram="none", main="TFB exo h2o2 NTS", scale="row")
+
+
+heatmap.2(as.matrix(exo.rnap.expon_NTS), Rowv=F, Colv=F, key=T, trace="none", dendrogram="none", main="RNAP exo expon NTS", scale="row")
+heatmap.2(as.matrix(exo.rnap.h2o2_NTS), Rowv=F, Colv=F, key=T, trace="none", dendrogram="none", main="RNAP exo h2o2 NTS", scale="row")
+```
+
+
+```{r filters}
+#Testing mappability of 50 nt reads in the relevant genomic intervals
+
+require(Biostrings)
+genome <- readDNAStringSet(genomeFasta)
+mapok <- rep(T, times=nrows)
+
+start_time<-Sys.time()
+for(i in 1:nrows){
+  #TSS pos
+  s <- TSS.inter$V3[i]  
+  #creating start positions for 50 nt sliding window for -30 to +20 positions
+  if(TSS.inter$V6[i] == "+") {sw_start <- seq.int(s-30, s+19, by=1)}
+  if(TSS.inter$V6[i] == "-") {sw_start <- seq.int(s-19-49, s+30-49, by=1)}
+  sw<-Views(genome[[1]], start=sw_start, width=50)
+  forSeq <- DNAStringSet(sw)
+  revSeq <- reverseComplement(forSeq)
+  f<-countPDict(forSeq,genome[[1]], max.mismatch=0, with.indels=F)
+  r<-countPDict(revSeq,genome[[1]], max.mismatch=0, with.indels=F)
+  if(sum(f + r > 1) >0){mapok[i] <- F}
+}
+end_time <- Sys.time()
+
+end_time - start_time
+
+table(mapok)
+which(mapok == F)
+
+```
+
+
+
+```{r creating data.frame with quantifications}
+data <- data.frame(exo.tfb.expon=rowSums(exo.tfb.expon_NTS),
+                   exo.tfb.h2o2=rowSums(exo.tfb.h2o2_NTS),
+                   exo.rnap.expon=rowSums(exo.rnap.expon_NTS),
+                   exo.rnap.h2o2=rowSums(exo.rnap.h2o2_NTS)
+                   )
+
+
+#filter data
+data <-data[mapok,]
+
+#calculate log2 changes
+data$exoChange.tfb <- log(data$exo.tfb.h2o2 / data$exo.tfb.expon,2) - log(mean(data$exo.tfb.h2o2 / data$exo.tfb.expon,2))
+data$exoChange.rnap <- log(data$exo.rnap.h2o2 / data$exo.rnap.expon,2) - log(mean(data$exo.rnap.h2o2 / data$exo.rnap.expon,2))
+```
+
+
+```{r correlation with ChIP-seq data}
+exph2o2.all <- merge(h2o2, expon, by.x="operon_id", by.y="operon_id", sort=F)
+exph2o2.all <- exph2o2.all[match(TSS.inter$V4, exph2o2.all$operon_id),]
+exph2o2.all <- exph2o2.all[mapok,]
+
+data.all <- cbind(data, exph2o2.all)
+data.all$EI_change <- data.all$EI_RNAPmean.x - data.all$EI_RNAPmean.y
+data.all$EI_change.fac <- cut(data.all$EI_change, breaks=c(-4,-1.5,1.5)) 
+```
+
+
+```{r}
+require(ggplot2)
+theme_set(theme_bw(base_size = 8))
+
+#exo changes
+g.exo<-ggplot(data=data.all, aes(x=exoChange.tfb, y=exoChange.rnap, col=EI_change.fac)) + geom_point(cex=0.2) + scale_color_viridis_d()
+g.exo <- g.exo + geom_point(cex=0.5) + 
+    xlab("Change in TFB ChIP-exo signal") + ylab("Change in RNAP ChIP-exo signal") + 
+  scale_y_continuous(limits=c(-3, 3), breaks=c(-3:3), expand = c(0, 0)) +
+  scale_x_continuous(limits=c(-3, 3), breaks=c(-3:3), expand = c(0, 0)) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  geom_abline(slope=1, linetype=2, col="grey", size=0.25) +
+  geom_vline(xintercept = 0, size=0.25) +
+  geom_hline(yintercept =0, size=0.25)
+g.exo
+ggplot2::ggsave("scatter.ChIP-exo_changes.exponVsH2O2.pdf", plot = g.exo, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+```
+
+#NB: though changes in permanganate ChIP-seq do correlate well with ChIP-exo changes, it looks like they change more drastically. Possible effect due to background correction being to conservative?
