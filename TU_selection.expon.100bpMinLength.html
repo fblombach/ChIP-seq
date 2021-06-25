@@ -187,10 +187,9 @@ summary {
 <p>This script selects transcription units (TUs) with the following criteria for two biological replicates:<br />
 - mapped TSS data from Wurtzel et al. (2009) are used when available, otherwise the start codon is used as proxy for the TSS<br />
 - assigned to TFB and TFEb peaks with biunique correspondence<br />
-- minimum length of 500 bp<br />
+- minimum length of 100 bp<br />
 - a minimum coverage of 20 reads in the chromatin input files for the relevant region<br />
-- no TU-internal TFB peaks indicating gene-internal or anti-sense promoters<br />
-- a minimum 1.5-fold increase in Spt4/5 signal within 150 bp upstream of TSS</p>
+- no TU-internal TFB peaks indicating gene-internal or anti-sense promoters</p>
 <p>The deeptools package needs to be installed!</p>
 <pre class="r"><code>knitr::opts_chunk$set(echo = TRUE)
 rm(list=ls())
@@ -216,8 +215,6 @@ TSS.adjust$shift&lt;-as.numeric(as.character(TSS.adjust$shift))
 #data available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141286
 #path to directory where data are stored
 mydir&lt;-(&quot;../GSE141290/&quot;)
-spt45_r1 &lt;- paste0(mydir, &quot;GSM4200371_Spt45_expon_r1.normRatio.bw&quot;)
-spt45_r2 &lt;- paste0(mydir, &quot;GSM4200372_Spt45_expon_r2.normRatio.bw&quot;)
 inputCov_r1 &lt;-paste0(mydir, &quot;GSM4200383_input.expon_r1.Coverage.bw&quot;)
 inputCov_r2 &lt;-paste0(mydir, &quot;GSM4200384_input.expon_r2.Coverage.bw&quot;)
 
@@ -228,9 +225,7 @@ Sys.setenv(phase = phase,
            TFEb_peaks = TFEb_peaks, 
            rRNA_TSS = rRNA_TSS, 
            primTSS = primTSS,
-           startCodons = startCodons, 
-           spt45_r1 = spt45_r1, 
-           spt45_r2 = spt45_r2,
+           startCodons = startCodons,
            inputCov_r1 = inputCov_r1, 
            inputCov_r2 = inputCov_r2)</code></pre>
 <pre class="bash"><code>export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
@@ -244,6 +239,7 @@ bedtools window -w 40 -a temp/btWindow40.TFB1.TFEb.&quot;$phase&quot;_IDR0.05.be
 bedtools window -w 40 -a temp/btWindow40.TFB1.TFEb.&quot;$phase&quot;_IDR0.05.bed -b $primTSS &gt; temp/btWindow40.TFB1.TFEb.&quot;$phase&quot;.primTSS_uniqueAssigned.bed
 
 bedtools window -w 40 -a temp/btWindow40.TFB1.TFEb.&quot;$phase&quot;_IDR0.05.bed -b $rRNA_TSS &gt; temp/btWindow40.TFB1.TFEb.&quot;$phase&quot;.rRNA_TSS.bed</code></pre>
+<pre><code>## mkdir: temp: File exists</code></pre>
 <pre class="r"><code># control for biunique assigment of peaks to each other
 peaks&lt;-read.table(paste0(&quot;temp/btWindow40.TFB1.TFEb.&quot;,phase,&quot;_IDR0.05.bed&quot;))
 nonuniqueTFB&lt;- peaks[duplicated(peaks$V4),]
@@ -275,8 +271,8 @@ opCoord[i,3]&lt;-end
 opCoord$length&lt;- opCoord$end - opCoord$start
 data.u&lt;-merge(data.u, opCoord[,c(1,4)], by.x=&quot;V14&quot;, by.y=&quot;operon_ID&quot;)
 #check number of TUs above minimum length
-nrow(subset(data.u, length&gt;=500))</code></pre>
-<pre><code>## [1] 334</code></pre>
+nrow(subset(data.u, length&gt;=100))</code></pre>
+<pre><code>## [1] 459</code></pre>
 <pre class="r"><code>#export bed file with coord for all TSS and start codons to calculate coverage data
 write.table(data.u[,c(12:14,1,15:16)], paste0(&quot;temp/TSSvATG.uniqueTFBvTFEbOccup.&quot;, phase, &quot;.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)
 # Count TUs that pass unique peak assignment
@@ -286,97 +282,52 @@ print(nrows)</code></pre>
 <pre class="r"><code>print(nrow(data.u))</code></pre>
 <pre><code>## [1] 489</code></pre>
 <pre class="r"><code>Sys.setenv(nrows = nrows)</code></pre>
-<p>Calculate and import coverage data for -250 to +500 interval from deeptools computeMatrix reference-point -bs 1 for both replicates</p>
+<p>Calculate and import coverage data for -100 to +100 interval from deeptools computeMatrix reference-point -bs 1 for both replicates</p>
 <pre class="bash"><code>export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
 
 #calculate input coverage
-computeMatrix reference-point --sortRegions keep -bs 1 -a 500 -b 250 -R temp/TSSvATG.uniqueTFBvTFEbOccup.&quot;$phase&quot;.bed -S $inputCov_r1 $inputCov_r2  -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
+computeMatrix reference-point --sortRegions keep -bs 1 -a 100 -b 100 -R temp/TSSvATG.uniqueTFBvTFEbOccup.&quot;$phase&quot;.bed -S $inputCov_r1 $inputCov_r2  -o temp/trashme.npz --outFileNameMatrix temp/trashme.tab;
 rm temp/trashme.npz;
 head -n 2 temp/trashme.tab &gt; temp/inputCoverage.&quot;$phase&quot;.tab; 
 tail -n $nrows temp/trashme.tab &gt;&gt; temp/inputCoverage.&quot;$phase&quot;.tab; rm temp/trashme.tab
 
-#calculate spt45 coverage
-computeMatrix reference-point --sortRegions keep -bs 1 -a 150 -b 150 -R temp/TSSvATG.uniqueTFBvTFEbOccup.&quot;$phase&quot;.bed -S $spt45_r1 $spt45_r2 -o temp/trashme2.npz --outFileNameMatrix temp/trashme2.tab;
-rm temp/trashme2.npz;
-head -n 2 temp/trashme2.tab &gt; temp/spt45Coverage.&quot;$phase&quot;.tab; 
-tail -n $nrows temp/trashme2.tab &gt;&gt; temp/spt45Coverage.&quot;$phase&quot;.tab; rm temp/trashme2.tab
 
 #count TFB peaks in TU
-bedtools window -l 40  -r 500 -sw -c  -a temp/TSSvATG.uniqueTFBvTFEbOccup.&quot;$phase&quot;.bed -b $TFB_peaks &gt; temp/TSSvATG.uniqueTFBvTFEbOccup.TU500.&quot;$phase&quot;.intTFB1PeakCount.bed</code></pre>
+bedtools window -l 40  -r 100 -sw -c  -a temp/TSSvATG.uniqueTFBvTFEbOccup.&quot;$phase&quot;.bed -b $TFB_peaks &gt; temp/TSSvATG.uniqueTFBvTFEbOccup.TU500.&quot;$phase&quot;.intTFB1PeakCount.bed</code></pre>
 <pre class="r"><code>cov &lt;- read.table(paste0(&quot;temp/inputCoverage.&quot;, phase, &quot;.tab&quot;), sep=&quot;\t&quot;, header=F)
-spt45cov&lt;-read.table(paste0(&quot;temp/spt45Coverage.&quot;, phase, &quot;.tab&quot;), sep=&quot;\t&quot;, header=F)
 TFBcount&lt;- read.table(paste0(&quot;temp/TSSvATG.uniqueTFBvTFEbOccup.TU500.&quot;, phase, &quot;.intTFB1PeakCount.bed&quot;), sep=&quot;\t&quot;, header=F)
-data.u$r1.minCovFull &lt;- do.call(pmin, cov[,1:750])
-data.u$r2.minCovFull &lt;- do.call(pmin, cov[,751:1500])</code></pre>
-<p>fraction of TUs &gt; 500 bp</p>
-<pre><code>## [1] 0.6830266</code></pre>
-<p>fraction of TUs with coverage min &gt;20 bp</p>
+data.u$r1.minCovFull &lt;- do.call(pmin, cov[,1:200])
+data.u$r2.minCovFull &lt;- do.call(pmin, cov[,201:400])</code></pre>
+<p>fraction of TUs &gt; 100 bp</p>
+<pre class="r"><code>print(nrow(subset(data.u, length &gt;=100))/nrows)</code></pre>
 <pre><code>## [1] 0.9386503</code></pre>
-<p>fraction of TUs with sufficient Spt4/5 signal increase</p>
-<pre class="r"><code>print(nrow(data.u[(spt45cov[,151]/spt45cov[,1]) &gt;1.5 &amp; (spt45cov[,451]/spt45cov[,301]) &gt;1.5,])/nrows)</code></pre>
-<pre><code>## [1] 0.8118609</code></pre>
-<p>fraction of TUs without internal TFB peaks</p>
+<p>fraction of TUs with coverage min &gt;20 bp</p>
+<pre class="r"><code>print(nrow(subset(data.u, r1.minCovFull &gt;20 &amp; r2.minCovFull &gt;20))/nrows)</code></pre>
+<pre><code>## [1] 0.9897751</code></pre>
+<p>fraction of TUs with no internal TFB peaks</p>
 <pre class="r"><code>print(nrow(data.u[TFBcount$V7 == 1,])/nrows)</code></pre>
-<pre><code>## [1] 0.7873211</code></pre>
+<pre><code>## [1] 1</code></pre>
 <p>filter dataset for TUs matching all criteria</p>
-<pre class="r"><code>data.u500f&lt;-subset(data.u,r1.minCovFull &gt;20 &amp; 
+<pre class="r"><code>data.u100f&lt;-subset(data.u,r1.minCovFull &gt;20 &amp; 
                           r2.minCovFull &gt;20 &amp;
-                          length &gt;=500 &amp;     
-                          TFBcount$V7 == 1 &amp;
-                          (spt45cov[,151]/spt45cov[,1]) &gt; 1.5 &amp; 
-                          (spt45cov[,451]/spt45cov[,301]) &gt; 1.5)
-#removal of TUs with no clear peak in TFB ChIP-exo, possibly implying multiple TSSs for the TU
-data.u500f&lt;-data.u500f[!(data.u500f$V14 %in% TSS.adjust[is.na(TSS.adjust$shift),1]),]</code></pre>
+                          length &gt;=100 &amp;     
+                          TFBcount$V7 == 1)</code></pre>
 <p>fraction of TUs that passes filtering</p>
-<pre class="r"><code>print(nrow(data.u500f)/nrows)</code></pre>
-<pre><code>## [1] 0.4335378</code></pre>
+<pre class="r"><code>print(nrow(data.u100f)/nrows)</code></pre>
+<pre><code>## [1] 0.9284254</code></pre>
 <p>number of TUs that passes filtering</p>
-<pre class="r"><code>print(nrow(data.u500f))</code></pre>
-<pre><code>## [1] 212</code></pre>
-<pre class="r"><code>write.table(data.u500f[order(data.u500f$V5, decreasing = T),c(12:14,1,15:16)], paste0(&quot;TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.&quot;, phase,&quot;.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)
-
-# creating bed files with subsets of the final data set with mapped TSS (TSS &amp; rRNA promoters) and those based on start codons (AUG)
-data.TSSrRNA.u500f&lt;-subset(data.u500f, V14 %in% setdiff(data.u500f$V14, data.AUG$V14))
+<pre class="r"><code>print(nrow(data.u100f))</code></pre>
+<pre><code>## [1] 454</code></pre>
+<pre class="r"><code>write.table(data.u100f[order(data.u100f$V5, decreasing = T),c(12:14,1,15:16)], paste0(&quot;TSSvATG.uniqueTFBvTFEbOccup.TU100.intTFBfilt.&quot;, phase,&quot;.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)</code></pre>
+<pre class="r"><code># creating bed files with subsets of the final data set with mapped TSS (TSS &amp; rRNA promoters)
+data.TSSrRNA.u100f&lt;-subset(data.u100f, V14 %in% setdiff(data.u100f$V14, data.AUG$V14))
 #reorder based on TFB occupancy
-data.TSSrRNA.u500f &lt;- data.TSSrRNA.u500f[order(data.TSSrRNA.u500f$V5, decreasing = T),]
-write.table(data.TSSrRNA.u500f[order(data.TSSrRNA.u500f$V5, decreasing = T),c(12:14,1,15:16)], paste0(&quot;TSS.uniqueTFBvTFEbOccup.TU500.intTFBfilt.&quot;, phase,&quot;.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)
-data.AUG.u500f&lt;-subset(data.u500f, V14 %in% setdiff(data.u500f$V14, data.TSSrRNA.u500f$V14))
-#reorder based on TFB occupancy
-data.AUG.u500f&lt;-data.AUG.u500f[order(data.AUG.u500f$V5, decreasing = T),]
-write.table(data.AUG.u500f[,c(12:14,1,15:16)], paste0(&quot;AUG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.&quot;,phase,&quot;.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)</code></pre>
-<div id="correction-of-predicted-tsss-based-on-tfb-chip-exo-for-tus-without-tss-mapping-data" class="section level1">
-<h1>Correction of predicted TSSs based on TFB ChIP-exo for TUs without TSS mapping data</h1>
-<pre class="r"><code>#filter out dropped lines
-data.AUG.u500f.adj&lt;-data.AUG.u500f[,c(12:14,1,15:16)]
-data.u500f.adj&lt;-data.u500f[,c(12:14,1,15:16)]
-#adjust TSS positions
-y&lt;-c(rep(0, nrow(data.AUG.u500f.adj)))
-for (i in 1:nrow(data.AUG.u500f.adj)) {
-  x&lt;-ifelse(data.AUG.u500f.adj[i,4] %in% TSS.adjust$operon_id, ifelse(
-            data.AUG.u500f.adj[i,6]==&quot;+&quot;,
-            data.AUG.u500f.adj[i,2] - TSS.adjust[TSS.adjust$operon_id==data.AUG.u500f.adj[i,4],2], 
-            data.AUG.u500f.adj[i,2] + TSS.adjust[TSS.adjust$operon_id==data.AUG.u500f.adj[i,4],2]),
-            data.AUG.u500f.adj[i,2])
-  y[i]&lt;-x
-}
-data.AUG.u500f.adj[,2]&lt;-y
-data.AUG.u500f.adj[,3]&lt;-y+1
-write.table(data.AUG.u500f.adj, paste0(&quot;AUG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.&quot;,phase,&quot;.adj.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)
-
-z&lt;-c(rep(0, nrow(data.u500f.adj)))
-for (i in 1:nrow(data.u500f.adj)) {
-  x&lt;-ifelse(data.u500f.adj[i,4] %in% TSS.adjust$operon_id, ifelse(
-    data.u500f.adj[i,6]==&quot;+&quot;,
-    data.u500f.adj[i,2] - TSS.adjust[TSS.adjust$operon_id==data.u500f.adj[i,4],2], 
-    data.u500f.adj[i,2] + TSS.adjust[TSS.adjust$operon_id==data.u500f.adj[i,4],2]),
-    data.u500f.adj[i,2])
-  z[i]&lt;-x
-}
-data.u500f.adj[,2]&lt;-z
-data.u500f.adj[,3]&lt;-z+1
-write.table(data.u500f.adj, paste0(&quot;TSSvATG.uniqueTFBvTFEbOccup.TU500.intTFBfilt.&quot;,phase,&quot;.adj.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)</code></pre>
+data.TSSrRNA.u100f &lt;- data.TSSrRNA.u100f[order(data.TSSrRNA.u100f$V5, decreasing = T),]
+write.table(data.TSSrRNA.u100f[order(data.TSSrRNA.u100f$V5, decreasing = T),c(12:14,1,15:16)], paste0(&quot;TSS.uniqueTFBvTFEbOccup.TU100.intTFBfilt.&quot;, phase,&quot;.bed&quot;), sep=&quot;\t&quot;, row.names=F, col.names=F, quote=F)</code></pre>
+<p>number of TUs that passes filtering</p>
+<pre class="r"><code>print(nrow(data.TSSrRNA.u100f))</code></pre>
+<pre><code>## [1] 323</code></pre>
 <pre class="bash"><code>rm -r temp</code></pre>
-</div>
 
 
 

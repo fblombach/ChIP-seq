@@ -1,0 +1,255 @@
+---
+title: "Permanganate ChIP-seq_aggregateProfiles"
+author: "Fabian Blombach"
+date: "16/04/2019"
+output: html_document
+---
+This script produces aggregate profiles for PIP-seq signal for the selected set of promoters 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+# set growth phase
+phase<-c("expon")
+
+#Permanganate-ChIP-seq data available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141286
+#path to directory where data are stored
+mydir<-("../GSE141290/")
+
+TFB_r1_fw <- paste0(mydir, "GSM4201862_TFB1.expon.r1.pip.1xCov.Tfilt.BackCorr.fw.bw")
+TFB_r1_rv <- paste0(mydir, "GSM4201862_TFB1.expon.r1.pip.1xCov.Tfilt.BackCorr.rv.bw")
+TFB_r2_fw <- paste0(mydir, "GSM4201863_TFB1.expon.r2.pip.1xCov.Tfilt.BackCorr.fw.bw")
+TFB_r2_rv <- paste0(mydir, "GSM4201863_TFB1.expon.r2.pip.1xCov.Tfilt.BackCorr.rv.bw")
+
+TSS <- "genome_data/TSS.uniqueTFBvTFEbOccup.TU100.intTFBfilt.expon.bed"
+TSSbed <- read.table(TSS)
+TSSbed$V4 <- as.character(TSSbed$V4)
+nrows <- nrow (TSSbed)
+
+TFB_peaks <- c(paste0("../../data_analysis/resampled_data/peak_calling/averaged_peaks_IDR0.05filtered/TFB1.", phase,".peaksIDR0.05.bed"))
+
+#S. solfataricus genome sequence
+genomeFasta <- "genome_data/NC_002754.fna"
+genomeSizes <- "genome_data/NC_002754.sizes"
+
+Sys.setenv(phase = phase, 
+           TFB_r1_fw = TFB_r1_fw, 
+           TFB_r1_rv = TFB_r1_rv,
+           TFB_r2_fw = TFB_r2_fw, 
+           TFB_r2_rv = TFB_r2_rv, 
+           TSS = TSS, nrows = nrows, 
+           TFB_peaks = TFB_peaks,
+           genomeFasta = genomeFasta,
+           genomeSizes = genomeSizes)
+
+require(gplots)
+require(ggplot2)
+require(seqinr)
+require(cowplot)
+require(Biostrings)
+```
+
+calculating matrices for Permanganate-ChIP-seq data
+```{bash Coverage data calculation}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+mkdir temp
+
+computeMatrix reference-point -a 50 -b 50 -bs 1 -R $TSS --sortRegions keep -S $TFB_r1_fw $TFB_r1_rv --outFileNameMatrix temp/trashme.tab -o temp/trashme.npz
+head -n 2 temp/trashme.tab > temp/matrixTFB_r1.tab; 
+tail -n $nrows temp/trashme.tab >> temp/matrixTFB_r1.tab; rm temp/trashme.tab temp/trashme.npz;
+
+computeMatrix reference-point -a 50 -b 50 -bs 1 -R $TSS --sortRegions keep -S $TFB_r2_fw $TFB_r2_rv --outFileNameMatrix temp/trashme.tab -o temp/trashme.npz
+head -n 2 temp/trashme.tab > temp/matrixTFB_r2.tab; 
+tail -n $nrows temp/trashme.tab >> temp/matrixTFB_r2.tab; rm temp/trashme.tab temp/trashme.npz;
+
+```
+
+```{r data import}
+TFB_r1 <- read.table("temp/matrixTFB_r1.tab")
+TFB_r2 <- read.table("temp/matrixTFB_r2.tab")
+
+TFB_r1.Watson <- TFB_r1[,1:100]
+TFB_r1.Crick <- TFB_r1[,101:200]
+TFB_r2.Watson <- TFB_r2[,1:100]
+TFB_r2.Crick <- TFB_r2[,101:200]
+
+
+#create subsets for each sample and gene orientation
+TFB_r1.Watson.NTS<-TFB_r1.Watson[(TSSbed$V6=="+"),]
+TFB_r1.Watson.TS<-TFB_r1.Watson[(TSSbed$V6=="-"),]
+TFB_r2.Watson.NTS<-TFB_r2.Watson[(TSSbed$V6=="+"),]
+TFB_r2.Watson.TS<-TFB_r2.Watson[(TSSbed$V6=="-"),]
+TFB_r1.Crick.NTS<-TFB_r1.Crick[(TSSbed$V6=="-"),]
+TFB_r1.Crick.TS<-TFB_r1.Crick[(TSSbed$V6=="+"),]
+TFB_r2.Crick.NTS<-TFB_r2.Crick[(TSSbed$V6=="-"),]
+TFB_r2.Crick.TS<-TFB_r2.Crick[(TSSbed$V6=="+"),]
+
+
+# change column names so that they are matching
+colnames(TFB_r1.Watson.NTS)<-c(1:100)
+colnames(TFB_r1.Watson.TS)<-c(1:100)
+colnames(TFB_r2.Watson.NTS)<-c(1:100)
+colnames(TFB_r2.Watson.TS)<-c(1:100)
+colnames(TFB_r1.Crick.NTS)<-c(1:100)
+colnames(TFB_r1.Crick.TS)<-c(1:100)
+colnames(TFB_r2.Crick.NTS)<-c(1:100)
+colnames(TFB_r2.Crick.TS)<-c(1:100)
+
+
+#combine data with same orientation and restore order
+TFB_r1.NTS<-data.frame(rbind(TFB_r1.Watson.NTS, TFB_r1.Crick.NTS))
+TFB_r1.NTS<- as.matrix(TFB_r1.NTS[order(as.numeric(rownames(TFB_r1.NTS))),])
+TFB_r2.NTS<-data.frame(rbind(TFB_r2.Watson.NTS, TFB_r2.Crick.NTS))
+TFB_r2.NTS<- as.matrix(TFB_r2.NTS[order(as.numeric(rownames(TFB_r2.NTS))),])
+
+TFB_r1.TS<-data.frame(rbind(TFB_r1.Watson.TS, TFB_r1.Crick.TS))
+TFB_r1.TS<- as.matrix(TFB_r1.TS[order(as.numeric(rownames(TFB_r1.TS))),])
+TFB_r2.TS<-data.frame(rbind(TFB_r2.Watson.TS, TFB_r2.Crick.TS))
+TFB_r2.TS<- as.matrix(TFB_r2.TS[order(as.numeric(rownames(TFB_r2.TS))),])
+```
+
+```{r mappability filter}
+#Only alignments for uniquely mapping reads were included in the ChIP-exo data. This additional filtering checks for uniqueness of every 50 nt sequence window in the genomic intervals to ensure that ChIP-exo sequencing reads can be mapped.
+
+#Please not that this filter uses the same window size as for the ChIP-exo data for consistency in data filtering between the mehtods. This 200 bp window is larger than the 50 bp window that is actually used for the Permanganate ChIP-seq profiles 
+
+
+genome <- readDNAStringSet(genomeFasta)
+mapok.pr <- rep(T, times=nrows)
+
+start_time<-Sys.time()
+for(i in 1:nrows){
+  #TSS pos
+  s <- TSSbed$V3[i]  
+  #creating start positions for 50 nt sliding window for -100 to +500 positions plus preceding 49 nt for TS/NTS mapping at pos -100 or +500, respectively
+  if(TSSbed$V6[i] == "+") {sw_start <- seq.int(s-149, s+99, by=1)}
+  if(TSSbed$V6[i] == "-") {sw_start <- seq.int(s-148, s+100, by=1)}
+  sw<-Views(genome[[1]], start=sw_start, width=50)
+  forSeq <- DNAStringSet(sw)
+  revSeq <- reverseComplement(forSeq)
+  f<-countPDict(forSeq,genome[[1]], max.mismatch=0, with.indels=F)
+  r<-countPDict(revSeq,genome[[1]], max.mismatch=0, with.indels=F)
+  if((TSSbed$V6[i] == "+" & sum(f[1:249] + r[1:249] > 1) >0) |
+     (TSSbed$V6[i] == "-" & sum(f[1:249] + r[1:249] > 1) >0)
+     ){mapok.pr[i] <- F}
+}
+end_time <- Sys.time()
+
+end_time - start_time
+
+table(mapok.pr)
+which(mapok.pr == F)
+```
+
+
+Obtain the underlying promoter sequences
+```{bash}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+bedtools slop -i $TSS -g  $genomeSizes -s -l 50 -r 49 > temp/slop.bed
+
+bedtools getfasta -name -s -bed temp/slop.bed -fi $genomeFasta -fo temp/DNA.fasta
+```
+
+```{r}
+DNA <- read.fasta("temp/DNA.fasta", forceDNAtolower=T)
+DNA<-as.data.frame(matrix(unlist(DNA), nrow=length(DNA), byrow=T), row.names=names(DNA))
+DNA <- data.frame(lapply(DNA, as.character), stringsAsFactors=FALSE)
+row.names(DNA)<-gsub('(+)',"",row.names(DNA), fixed=T)
+row.names(DNA)<-gsub('(-)',"",row.names(DNA), fixed=T)
+```
+
+Filter for Ts and calculate mean and sd
+```{r T filtering}
+#Permanganate oxidation of single stranded DNA regions is largely specific for Ts. Therefore, only T positions in the DNA sequences are considered. Imported DNA sequences reflect the non-template strand, thus template strand positions are filtered for As.
+
+TFB_r1.NTS[DNA != "t"]  <- NA
+TFB_r2.NTS[DNA != "t"]  <- NA
+TFB_r1.TS[DNA != "a"]  <- NA
+TFB_r2.TS[DNA != "a"]  <- NA
+
+TFB_r1_NTS.mean<-colMeans(TFB_r1.NTS[mapok.pr,], na.rm=T)
+TFB_r1_TS.mean<-colMeans(TFB_r1.TS[mapok.pr,], na.rm=T)
+TFB_r2_NTS.mean<-colMeans(TFB_r2.NTS[mapok.pr,], na.rm=T)
+TFB_r2_TS.mean<-colMeans(TFB_r2.TS[mapok.pr,], na.rm=T)
+
+TFB<-data.frame(TFB_r1_NTS.mean, TFB_r2_NTS.mean, TFB_r1_TS.mean, TFB_r2_TS.mean)
+TFB$NTS.mean<- (TFB_r1_NTS.mean + TFB_r2_NTS.mean)/2
+TFB$TS.mean<- (TFB_r1_TS.mean + TFB_r2_TS.mean)/2
+TFB$NTS.sd<- apply(TFB[,1:2], 1, sd, na.rm=T)
+TFB$TS.sd<- apply(TFB[,3:4], 1, sd, na.rm=T)
+TFB$pos<- 1:100
+```
+
+Count Ts per position
+```{r}
+stats.NTS<-apply(TFB_r1.NTS[mapok.pr,], 2, function(x) length(which(!is.na(x))))
+stats.TS<-apply(TFB_r1.TS[mapok.pr,], 2, function(x) length(which(!is.na(x))))
+# number of T containing positions on NTS included in meta-profile ranges from
+min(stats.NTS)
+# to
+max(stats.NTS)
+
+# number of T containing positions on TS included in meta-profile ranges from
+min(stats.TS)
+# to
+max(stats.TS)
+```
+Positions covered only with sparse signal: positions +1 (NTS) and -1 (TS). Because of the Inr consensus in promoter sequences, these positions are (almost) never encoding Ts. Thus profiles are not informative for these positions and the signal was instead interpolated between neighbouring positions.
+
+```{r interpolation}
+#interpolating values for NTS +1 and TS -1
+TFB$TS.mean[50]<-mean(TFB$TS.mean[c(49,51)])
+TFB$NTS.mean[51]<-mean(TFB$NTS.mean[c(50,52)])
+```
+
+
+
+Data plotting
+```{r aggregate plot}
+lm=20
+InrRect<-data.frame(xmin=48.5, xmax= 52.5, ymin=(-lm), ymax= lm)
+TATArect<-data.frame(xmin=20.5, xmax=28.5 , ymin=c(-lm), ymax= c(lm))
+PICrect<-data.frame(xmin=10.5, xmax=70.5, ymin=(-lm), ymax= lm)
+
+
+# set theme for plotting traces
+theme_chip<- function (base_size = 11, base_family = "") 
+{
+  theme_bw(base_size = base_size, base_family = base_family) %+replace% 
+    theme(panel.background = element_blank(), 
+          panel.border = element_blank(), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          axis.title.x=element_blank(), 
+          axis.text.x=element_blank(), 
+          axis.ticks.x=element_blank(),
+          axis.title.y=element_blank(), 
+          plot.margin = unit(c(1,1,0,1), "mm"), complete = TRUE)
+}
+
+plot_TFB<-ggplot(data=TFB) +
+  geom_rect(data=InrRect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="grey90") +
+  geom_rect(data=TATArect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="grey90") +
+  geom_col(aes(x=pos, y=NTS.mean),  fill="#1F968B") +
+  geom_col(aes(x=pos, y=-TS.mean),  fill="#78C0B9") + 
+  theme_chip()  +
+  theme(axis.line.x = element_blank(), axis.line.y = element_line(color="black", size = 0.5)) +
+  scale_y_continuous(breaks = c(-lm,lm), limits = c(-lm, lm), expand = c(0, 0), position="right") +
+  scale_x_continuous(expand = c(0, 0), limits = c(1,100), breaks=c(1, 51, 100)) 
+plots<-plot_grid(plot_TFB, ncol=1, align="v")
+save_plot(paste0("pipSeqAggrPlot.", phase,".100bp_window.pdf"), plots, base_height=4, base_width=4)
+
+plots
+```
+
+
+
+
+
+
+
+```{bash}
+rm -r temp
+```
+

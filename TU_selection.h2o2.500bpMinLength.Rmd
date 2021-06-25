@@ -107,7 +107,7 @@ data.u<-merge(data.u, opCoord[,c(1,4)], by.x="V14", by.y="operon_ID")
 nrow(subset(data.u, length>=500))
 #export bed file with coord for all TSS and start codons to calculate coverage data
 write.table(data.u[,c(12:14,1,15:16)], paste0("temp/TSSvATG.uniqueTFBvTFEbOccup.", phase, ".bed"), sep="\t", row.names=F, col.names=F, quote=F)
-# calculate minimum coverage for entire interval (-250 to 500) and count TUs that pass >20 coverage
+# Count TUs that pass unique peak assignment
 nrows<-nrow(data.u)
 print(nrows)
 print(nrow(data.u))
