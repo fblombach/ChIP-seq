@@ -1,4 +1,7 @@
 # ChIP-seq
+All R markdown files are accompagnied by HTML output files that would need to be downloaded in order to visualise the output of the scripts.
+
+
 Scripts used for general data processing:
 
 #ChIP-seq: R script for read sampling
@@ -10,6 +13,14 @@ https://github.com/fblombach/ChIP-seq/blob/master/Permanganate-ChIP-seq_Backgrou
 
 
 Figure 1
+#Data filtering
+...
+
+#ChIP-exo aggregate profiles and scatter plots
+https://github.com/fblombach/ChIP-seq/blob/master/chip-exo.aggregateProfile.Rmd
+
+#Permanganate ChIP-seq aggregate profiles
+https://github.com/fblombach/ChIP-seq/blob/master/permanganate-ChIP-seq_aggregateProfile.Rmd
 
 Figure 2
 #Data filtering

@@ -1,0 +1,268 @@
+---
+title: "chip-exo aggregate profiles"
+author: "Fabian Blombach"
+date: "04/04/2019"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(cowplot)
+require(RVAideMemoire)
+require(ggplot2)
+require(GenomicRanges)
+require(Biostrings)
+
+phase<-"expon"
+
+#ChIP-exo data available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141286
+#path to directory where data are stored
+mydir<-("../GSE141290/")
+
+tfbFW <- paste0(mydir, "GSE141289_TFB_exo_expon_GM_Forward.bw")
+tfbRV <- paste0(mydir, "GSE141289_TFB_exo_expon_GM_Reverse.bw")
+
+rnapFW <- paste0(mydir, "GSE141289_Rpo47_exo_expon_GM_Forward.bw")
+rnapRV <- paste0(mydir, "GSE141289_Rpo47_exo_expon_GM_Reverse.bw")
+
+
+tfebFW <- paste0(mydir, "GSE141289_TFEb_exo_expon_GM_Forward.bw")
+tfebRV <- paste0(mydir, "GSE141289_TFEb_exo_expon_GM_Reverse.bw")
+
+
+TSS <- "genome_data/TSS.uniqueTFBvTFEbOccup.TU100.intTFBfilt.expon.bed"
+
+nrows <- nrow(read.table(TSS))
+TSSbed <- read.table(TSS)
+
+#S. solfataricus genome sequence
+genomeFasta <- "genome_data/NC_002754.fna"
+genome <- readDNAStringSet(genomeFasta)
+
+Sys.setenv(phase = phase, TSS = TSS, tfbFW = tfbFW, tfbRV = tfbRV, rnapFW = rnapFW, rnapRV = rnapRV, tfebFW = tfebFW, tfebRV = tfebRV, nrows = nrows)
+```
+
+
+
+calculating matrices
+```{bash}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+mkdir ../temp
+computeMatrix reference-point -a 100 -b 100 -bs 1 -R $TSS --sortRegions keep -S $rnapFW $rnapRV $tfbFW $tfbRV $tfebFW $tfebRV -o ../temp/trashme.npz --outFileNameMatrix ../temp/trashme.tab
+rm ../temp/trashme.npz;
+head -n 2 ../temp/trashme.tab > ../temp/coverage.tab; 
+tail -n $nrows ../temp/trashme.tab >> ../temp/coverage.tab; rm ../temp/trashme.tab;
+
+```
+
+```{r data import and processing}
+cov <- read.table("../temp/coverage.tab")
+cov[is.na(cov)]<- 0
+
+#splitting matrix by factor and orientation (non-template vs template strand)
+fac.v<-c("rnap", "tfb", "tfeb")
+  for (j in 1:3){
+    shift<-(j-1)*400
+    NTS <- matrix(data=NA, nrow=nrows, ncol=200)
+    TS <- matrix(data=NA, nrow=nrows, ncol=200)
+    for (i in 1:nrows){
+      if(TSSbed$V6[i] == "+"){
+          NTS[i,]<-unlist(cov[i,shift+1:200])
+          TS[i,]<-unlist(cov[i,shift+200+1:200])
+      }
+      if(TSSbed$V6[i] == "-"){
+          NTS[i,]<-unlist(cov[i,shift+200+1:200])
+          TS[i,]<-unlist(cov[i,shift+1:200])
+      }
+    }
+    assign(paste0(fac.v[j], "_NTS"), NTS)
+    assign(paste0(fac.v[j], "_TS"), TS)
+  }
+```
+
+```{r mappability filter}
+#Only alignments for uniquely mapping reads were included in the ChIP-exo data. This additional filtering checks for uniqueness of every 50 nt sequence window in the genomic intervals to ensure that ChIP-exo sequencing reads can be mapped.
+
+mapok.pr <- rep(T, times=nrows)
+
+start_time<-Sys.time()
+for(i in 1:nrows){
+  #TSS pos
+  s <- TSSbed$V3[i]  
+  #creating start positions for 50 nt sliding window for -100 to +500 positions plus preceding 49 nt for TS/NTS mapping at pos -100 or +500, respectively
+  if(TSSbed$V6[i] == "+") {sw_start <- seq.int(s-149, s+99, by=1)}
+  if(TSSbed$V6[i] == "-") {sw_start <- seq.int(s-148, s+100, by=1)}
+  sw<-Views(genome[[1]], start=sw_start, width=50)
+  forSeq <- DNAStringSet(sw)
+  revSeq <- reverseComplement(forSeq)
+  f<-countPDict(forSeq,genome[[1]], max.mismatch=0, with.indels=F)
+  r<-countPDict(revSeq,genome[[1]], max.mismatch=0, with.indels=F)
+  if((TSSbed$V6[i] == "+" & sum(f[1:249] + r[1:249] > 1) >0) |
+     (TSSbed$V6[i] == "-" & sum(f[1:249] + r[1:249] > 1) >0)
+     ){mapok.pr[i] <- F}
+}
+end_time <- Sys.time()
+
+end_time - start_time
+
+table(mapok.pr)
+which(mapok.pr == F)
+```
+
+
+```{r PIC occupancy data.frame}
+data.exo <- data.frame(operon_ID = TSSbed$V4, 
+                       RNAP = log(rowMeans(rnap_NTS[,71:120]),2),
+                       TFB = log(rowMeans(tfb_NTS[,71:120]),2),
+                       TFEb = log(rowMeans(tfeb_NTS[,71:120]),2)
+                       )
+
+```
+
+
+```{r plotting and correlation}
+# function to calculate density
+get_density <- function(a, b, n = 100) {
+  dens <- MASS::kde2d(x = a, y = b, n = n)
+  ix <- findInterval(a, dens$x)
+  iy <- findInterval(b, dens$y)
+  ii <- cbind(ix, iy)
+  return(dens$z[ii])
+}
+
+
+#plotting and correlation function
+plot.data<-function(x,y) {
+  #filter out NAs (for RNA)
+  filter <- (is.na(data.exo[[x]]) | is.na(data.exo[[y]])) == F & mapok.pr == T
+  #calculate density
+  plot.density<- get_density(data.exo[[x]][filter], data.exo[[y]][filter])
+  range.xy <- max(c(data.exo[[x]][filter], data.exo[[y]][filter])) - min(c(data.exo[[x]][filter], data.exo[[y]][filter]))
+  lm.cx<- ceiling(2*(max(c(data.exo[[x]][filter], data.exo[[y]][filter]))  + 0.05*range.xy))/2
+  lm.fx<- floor(2*(min(c(data.exo[[x]][filter], data.exo[[y]][filter])) - 0.05*range.xy))/2
+  lm.cy<-lm.cx
+  lm.fy<-lm.fx
+  correl<-spearman.ci(data.exo[[x]][filter],data.exo[[y]][filter])  
+  
+  plot <- ggplot(data=data.exo[filter,], aes_string(x=x , y=y, colour = plot.density)) 
+  plot <- plot + geom_point(cex=0.2) + 
+    scale_color_viridis_c() +
+    xlab(x) + ylab(y) + 
+  scale_y_continuous(limits=c(lm.fy, lm.cy), breaks=c(-10:10), expand = c(0, 0)) +
+  scale_x_continuous(limits=c(lm.fx, lm.cx), breaks=c(-10:10), expand = c(0, 0)) + 
+  theme(aspect.ratio=1,panel.grid.major = element_blank(), panel.grid.minor  = element_blank(), 
+        legend.position = "none", axis.ticks = element_line(colour = "black", size = 0.5),
+        panel.border  = element_rect(colour = "black", size = 0.5)) +
+  ggtitle(paste0(x,".vs.", y, ". rho =", round(correl$estimate, digits=2), ", 95%CI [", 
+             round(correl$conf.int[1], digits=2), ", ", 
+             round(correl$conf.int[2], digits=2), "], n=", sum(filter))) +
+  geom_abline(slope=1)
+#Saving plot as 45x45 mm pdf 
+ggplot2::ggsave(paste0("scatter.", x, "v", y, ".exo.", phase, ".pdf"), plot = plot, device = "pdf", path = NULL,
+       scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
+}
+
+plot.data("TFB", "TFEb")
+plot.data("TFB", "RNAP")
+plot.data("RNAP", "TFEb")
+```
+
+
+```{r Aggregate profiles}
+#data.frame with scaled data
+data.meta <- data.frame(pos = 1:200,
+                        rnap_NTS = apply(rnap_NTS[mapok.pr,], 2, mean), 
+                        rnap_TS = apply(rnap_TS[mapok.pr,], 2, mean), 
+                        tfb_NTS = apply(tfb_NTS[mapok.pr,], 2, mean),
+                        tfb_TS = apply(tfb_TS[mapok.pr,], 2, mean),
+                        tfeb_NTS = apply(tfeb_NTS[mapok.pr,], 2, mean),
+                        tfeb_TS = apply(tfeb_TS[mapok.pr,], 2, mean),
+                        rnap_NTS.sd = apply(rnap_NTS[mapok.pr,], 2, sd), 
+                        rnap_TS.sd = apply(rnap_TS[mapok.pr,], 2, sd), 
+                        tfb_NTS.sd = apply(tfb_NTS[mapok.pr,], 2, sd),
+                        tfb_TS.sd = apply(tfb_TS[mapok.pr,], 2, sd),
+                        tfeb_NTS.sd = apply(tfeb_NTS[mapok.pr,], 2, sd),
+                        tfeb_TS.sd = apply(tfeb_TS[mapok.pr,], 2, sd)
+                        )
+
+#make plots
+lm <- ceiling(max(data.meta$rnap_NTS, 
+           data.meta$rnap_TS,
+           data.meta$tfb_NTS,
+           data.meta$tfb_TS,
+           data.meta$tfeb_NTS,
+           data.meta$tfeb_TS
+           ))
+theme_chip<- function (base_size = 11, base_family = "") 
+{
+  theme_bw(base_size = base_size, base_family = base_family) %+replace% 
+    theme(panel.background = element_blank(), 
+          panel.border = element_blank(), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          axis.title.x=element_blank(), 
+          axis.text.x=element_blank(), 
+          axis.ticks.x=element_blank(),
+          axis.title.y=element_blank(), 
+          plot.margin = unit(c(1,1,0,1), "mm"), complete = TRUE)
+}
+
+# define Inr position (pos -1 to +2 relative to TSS)
+InrRect<-data.frame(xmin=99.5, xmax=102.5, ymin=(-lm), ymax= lm)
+TATArect<-data.frame(xmin=70.5, xmax=78.5 , ymin=c(-lm), ymax= c(lm))
+PICrect<-data.frame(xmin=60.5, xmax=120.5, ymin=(-lm), ymax= lm)
+
+plot_RNAP<-ggplot() +
+  geom_rect(data=PICrect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#0000FF", alpha=0.05) +
+  geom_rect(data=TATArect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#DCDCDC") +
+  geom_rect(data=InrRect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#DCDCDC") +
+  geom_area(data=data.meta, aes(x=pos, y=rnap_NTS),  fill="#000000") + 
+  geom_line(data=data.meta, aes(x=pos, y=rnap_NTS),  colour="#000000") +
+  geom_area(data=data.meta, aes(x=pos, y=-rnap_TS),  fill="#666666") + 
+  geom_line(data=data.meta, aes(x=pos, y=-rnap_TS),  colour="#666666") +
+  theme_chip()  +
+  theme(axis.line.x = element_blank(), axis.line.y = element_line(color="black", size = 0.5)) +
+  scale_y_continuous(breaks = c(-lm,lm), limits = c(-lm, lm), expand = c(0, 0), position="right") +
+  scale_x_continuous(expand = c(0, 0), limits = c(1,200))
+
+plot_TFB<-ggplot() +
+  geom_rect(data=PICrect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#0000FF", alpha=0.05) +
+  geom_rect(data=TATArect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#DCDCDC") +
+  geom_rect(data=InrRect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#DCDCDC") +
+  geom_area(data=data.meta, aes(x=pos, y=tfb_NTS),  fill="#1F968B") + 
+  geom_line(data=data.meta, aes(x=pos, y=tfb_NTS),  colour="#1F968B") +
+  geom_area(data=data.meta, aes(x=pos, y=-tfb_TS),  fill="#78C0B9") + 
+  geom_line(data=data.meta, aes(x=pos, y=-tfb_TS),  colour="#78C0B9") +
+  theme_chip()  +
+  theme(axis.line.x = element_blank(), axis.line.y = element_line(color="black", size = 0.5)) +
+  scale_y_continuous(breaks = c(-lm,lm), limits = c(-lm, lm), expand = c(0, 0), position="right") +
+  scale_x_continuous(expand = c(0, 0), limits = c(1,200))
+
+plot_TFEb<-ggplot() +
+  geom_rect(data=PICrect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#0000FF", alpha=0.05) +
+  geom_rect(data=TATArect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#DCDCDC") +
+  geom_rect(data=InrRect, mapping=aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+            color=NA, fill="#DCDCDC") +
+  geom_area(data=data.meta, aes(x=pos, y=tfeb_NTS),  fill="#FF6347") + 
+  geom_line(data=data.meta, aes(x=pos, y=tfeb_NTS),  colour="#FF6347") +
+  geom_area(data=data.meta, aes(x=pos, y=-tfeb_TS),  fill="#FFA190") + 
+  geom_line(data=data.meta, aes(x=pos, y=-tfeb_TS),  colour="#FFA190") +
+  theme_chip()  +
+  theme(axis.line.x = element_blank(), axis.line.y = element_line(color="black", size = 0.5)) +
+  scale_y_continuous(breaks = c(-lm,lm), limits = c(-lm, lm), expand = c(0, 0), position="right") +
+  scale_x_continuous(expand = c(0, 0), limits = c(1,200))
+
+plots<-plot_grid(plot_TFB, plot_TFEb, plot_RNAP, ncol=1, align="v")
+save_plot(paste0("exoMetaPlot.", phase,".200bp_window.pdf"), plots, base_height=6, base_width=4)
+
+plots
+```
