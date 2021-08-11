@@ -50,8 +50,8 @@ https://github.com/fblombach/ChIP-seq/blob/master/EI_comparison.Rmd
 
 ##Figure 6
 #Data filtering
-https://github.com/fblombach/ChIP-seq/blob/master/TU_selection.expon.500bpMinLengthRmd.Rmd
-TU_selection.h2o2.500bpMinLengthRmd.Rmd
+https://github.com/fblombach/ChIP-seq/blob/master/TU_selection.expon.500bpMinLength.Rmd
+https://github.com/fblombach/ChIP-seq/blob/master/TU_selection.h2o2.500bpMinLength.Rmd
 
 #DNA hybrid stability calculations
 https://github.com/fblombach/ChIP-seq/blob/master/DNAhybrid_stability.H2O2.Rmd
