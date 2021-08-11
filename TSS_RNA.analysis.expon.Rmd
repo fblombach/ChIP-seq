@@ -122,7 +122,7 @@ head -n 2 temp/trashme.tab > temp/coverage.tab;
 tail -n $nrows temp/trashme.tab >> temp/coverage.tab; rm temp/trashme.tab;
 ```
 
-```{r Calculate_CPSF1_peakMaxima}
+```{r data import}
 x<-read.table("temp/coverage.tab")
 x[is.na(x)]<-0
 r1M_spt45<-as.matrix(x[,1:200])
@@ -538,9 +538,9 @@ plotbox2
 ggsave(paste0("boxplot.EI_fractSmallReads.", x,"nt_cutoff", phase, ".pdf"), plot = plotbox2, device = "pdf", path = NULL,
        scale = 1, width = 45, height = 45, units = c("mm"), limitsize = TRUE)
 
-wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "interm" | frac.df$EI == "low",], alternative="greater")
-wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "high" | frac.df$EI == "low",], alternative="greater")
-wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "interm" | frac.df$EI == "high",], alternative="greater")
+wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "interm" | frac.df$EI == "low",], alternative="two.sided")
+wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "high" | frac.df$EI == "low",], alternative="two.sided")
+wilcox.test(smallReadFraction ~ EI, data=frac.df[frac.df$EI == "interm" | frac.df$EI == "high",], alternative="two.sided")
 
 ```
 
