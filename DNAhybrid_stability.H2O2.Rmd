@@ -1,0 +1,585 @@
+---
+title: "DNAhybrid_stability.H2O2"
+author: "Fabian Blombach"
+date: "07/06/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+data <- read.delim("data/data.h2o2.txt", header=T)
+TSS <- "genome_data/TSS.uniqueTFBvTFEbOccup.TU500.intTFBfilt.H2O2.bed"
+TSSbed <- read.table(TSS)
+TSSbed$V4 <- as.character(TSSbed$V4)
+nrows <- nrow (TSSbed)
+
+genomeFasta <- "genome_data/NC_002754.fna"
+genomeSizes <- "genome_data/NC_002754.sizes"
+genomeBckgr <- "genome_data/Sso_background_MEME.prn"
+
+Sys.setenv(TSS = TSS, 
+           nrows = nrows, 
+           genomeFasta = genomeFasta, 
+           genomeSizes = genomeSizes, 
+           genomeBckgr = genomeBckgr)
+
+require(gplots)
+require(ggplot2)
+require(seqinr)
+require(RVAideMemoire)
+require(MASS)
+require(cowplot)
+require(colorspace)
+require(universalmotif)
+```
+
+
+```{bash}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+mkdir temp
+bedtools slop -i $TSS -g  $genomeSizes -s -l 50 -r 99 > temp/slop.bed
+
+bedtools getfasta -nameOnly -s -bed temp/slop.bed -fi $genomeFasta -fo temp/DNA.fasta
+```
+
+```{r}
+#Temperature in Kelvin
+temp=349.15
+#Salt concentration in molar
+salt= 0.025
+
+#load reference values from SantaLucia Jr paper (PNAS 1998)
+NN<-read.table("data/NN_thermodynamics.txt", header=T, sep="\t")
+NN$ΔH<-as.numeric(as.character(NN$deltaH))
+NN$ΔS<-as.numeric(as.character(NN$deltaS))
+#delH is in kcal/mol, while delS is in cal/mol*k, calculate the delG in kcal/mol
+NN$ΔG <- NN$ΔH - (NN$ΔS*temp/1000)
+
+#load alignment of promoter sequences (output from bedtools getfasta -tab)
+require(seqinr)
+input<-read.fasta("temp/DNA.fasta", forceDNAtolower=T)
+mono<-as.data.frame(matrix(unlist(input), nrow=length(input), byrow=T), row.names=names(input))
+row.names(mono)<-gsub('(+)',"",row.names(mono), fixed=T)
+row.names(mono)<-gsub('(-)',"",row.names(mono), fixed=T)
+# loop to make table with dinucleotides
+dinuc<-matrix(rep("N", times=nrow(mono)*(ncol(mono)-1)), nrow=nrow(mono))
+for (j in 1:nrow(mono)) {
+  for (i in 1:(ncol(mono)-1)) { 
+  dinuc[j,i] <- paste0(mono[j,i], mono[j,i+1]) 
+  } 
+}
+# replace dinucleotides with corresponding deltaG values
+dinucG<-dinuc
+for (k in 1:16) {
+dinucG[dinucG == NN[k,1]]<- NN[k,4]
+}
+dinucG<-data.frame(matrix(as.numeric(dinucG), ncol=ncol(dinuc)))
+
+
+# calculate G for sliding window of width = width by summing up dinucleotide G values
+calcDeltG<-function(width = 7){
+SW<-matrix(rep(0, times=nrow(dinucG)*((ncol(dinucG)+1)-width+1)), nrow=nrow(dinucG))
+for (m in 1:ncol(SW)) { 
+  SW[,m] <- rowSums(dinucG[,m:(m+width-2)]) - 0.114*(width-1)*log(salt) 
+} 
+row.names(SW)<-TSSbed$V4
+return(SW)
+}
+SW<-calcDeltG(width=7)
+
+  # plot heatmap
+  # calculate min and max values 
+min<-floor(pmin(min(SW)))
+max<-ceiling(pmax(max(SW)))
+breaks<-c(seq(min,max, by= ((max-min)/256)))
+require(gplots)
+heatmap.2(SW, Rowv=F, Colv=F, trace="none", dendrogram="none", key=F, breaks=breaks, col="redblue")
+
+#sorting heatmap based on features
+SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id", sort=F)
+heatmap.2(SW[order(SWEI$EI_spt45_r1+SWEI$EI_spt45_r2, decreasing=T),], Rowv=F, Colv=F, trace="none", dendrogram="none", 
+          key=F, breaks=breaks, col="redblue")
+
+#testing correlations between single dinucleotide stabilities:
+mat.cor.dinuc<-cor(dinucG, method="spearman")
+mat.cor.dinuc<-as.matrix(mat.cor.dinuc, ncol=ncol(dinucG))
+breaks.cor<-c(seq(-1,1, by= (0.1)))
+heatmap.2(mat.cor.dinuc, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue")
+#testing correlations between stabilities for oligonucleotides:
+mat.cor.SW<-cor(SW, method="spearman")
+mat.cor.SW<-as.matrix(mat.cor.SW, ncol=ncol(SW))
+heatmap.2(mat.cor.SW, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue")
+
+# nested loops to test correlation between ChIP-seq data (table "data") and SW for different width values
+
+
+#Spt45 escape
+zz<-list()
+for (q in 3:20) {
+  SW<-calcDeltG(width=q)
+  row.names(SW)<-TSSbed$V4
+  SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id")
+  z<-list()
+  for (x in 2:71) {
+    y<-suppressWarnings(cor.test(SWEI$EI_spt45_r1 + SWEI$EI_spt45_r2, SWEI[,x], method="spearman"))
+    z[x]<-y$estimate
+  }
+  z2<-do.call(rbind, z)
+  z2<-data.frame(z2)
+  zz[q]<-z2
+  
+}
+zz2<-do.call(cbind,zz)
+zz2<-data.frame(zz2)
+zz2$pos<- c((-50):(-1), 1:20)
+zz3<-as.matrix(zz2[1:(ncol(zz2)-1)], ncol=17)
+breaks.cor<-seq(-1,1, by=0.05)
+heatmap.2(zz3, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue", labRow = FALSE, labCol = FALSE, main="EI Spt4/5")
+
+
+#RNAP escape
+zz<-list()
+for (q in 3:20) {
+  SW<-calcDeltG(width=q)
+  row.names(SW)<-TSSbed$V4
+  SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id")
+  z<-list()
+  for (x in 2:71) {
+    y<-suppressWarnings(cor.test(SWEI$EI_RNAP1 + SWEI$EI_RNAP2, SWEI[,x], method="spearman"))
+    z[x]<-y$estimate
+  }
+  z2<-do.call(rbind, z)
+  z2<-data.frame(z2)
+  zz[q]<-z2
+  
+}
+zz2<-do.call(cbind,zz)
+zz2<-data.frame(zz2)
+zz2$pos<- c((-50):(-1), 1:20)
+zz3<-as.matrix(zz2[1:(ncol(zz2)-1)], ncol=17)
+breaks.cor<-seq(-1,1, by=0.05)
+heatmap.2(zz3, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue", labRow = FALSE, labCol = FALSE, main="EI RNAP")
+
+#Elf1 escape
+zz<-list()
+for (q in 3:20) {
+  SW<-calcDeltG(width=q)
+  row.names(SW)<-TSSbed$V4
+  SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id")
+  z<-list()
+  for (x in 2:71) {
+    y<-suppressWarnings(cor.test(SWEI$EI_elf1_r1 + SWEI$EI_elf1_r2, SWEI[,x], method="spearman"))
+    z[x]<-y$estimate
+  }
+  z2<-do.call(rbind, z)
+  z2<-data.frame(z2)
+  zz[q]<-z2
+  
+}
+zz2<-do.call(cbind,zz)
+zz2<-data.frame(zz2)
+zz2$pos<- c((-50):(-1), 1:20)
+zz3<-as.matrix(zz2[1:(ncol(zz2)-1)], ncol=17)
+breaks.cor<-seq(-1,1, by=0.05)
+heatmap.2(zz3, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue", labRow = FALSE, labCol = FALSE, main="EI Elf1")
+
+#aCPSF1 load on Elf1-TEC
+zz<-list()
+for (q in 3:20) {
+  SW<-calcDeltG(width=q)
+  row.names(SW)<-TSSbed$V4
+  SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id")
+  z<-list()
+  for (x in 2:71) {
+    y<-suppressWarnings(cor.test((SWEI$cpsf1_r1_promoter/SWEI$elf1_r1_promoter + SWEI$cpsf1_r2_promoter/SWEI$elf1_r1_promoter), SWEI[,x], method="spearman"))
+    z[x]<-y$estimate
+  }
+  z2<-do.call(rbind, z)
+  z2<-data.frame(z2)
+  zz[q]<-z2
+  
+}
+zz2<-do.call(cbind,zz)
+zz2<-data.frame(zz2)
+zz2$pos<- c((-50):(-1), 1:20)
+zz3<-as.matrix(zz2[1:(ncol(zz2)-1)], ncol=17)
+breaks.cor<-seq(-1,1, by=0.05)
+heatmap.2(zz3, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue", labRow = FALSE, labCol = FALSE, main="aCPSF1 load on Elf1-TEC")
+
+
+#TFEb to TFB ratio
+zz<-list()
+for (q in 3:20) {
+  SW<-calcDeltG(width=q)
+  row.names(SW)<-TSSbed$V4
+  SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id")
+  z<-list()
+  for (x in 2:71) {
+    y<-suppressWarnings(cor.test((SWEI$TFEb_foldR1/SWEI$TFB1_foldR1 + SWEI$TFEb_foldR2/SWEI$TFB1_foldR2), SWEI[,x], method="spearman"))
+    z[x]<-y$estimate
+  }
+  z2<-do.call(rbind, z)
+  z2<-data.frame(z2)
+  zz[q]<-z2
+  
+}
+zz2<-do.call(cbind,zz)
+zz2<-data.frame(zz2)
+zz2$pos<- c((-50):(-1), 1:20)
+zz3<-as.matrix(zz2[1:(ncol(zz2)-1)], ncol=17)
+breaks.cor<-seq(-1,1, by=0.05)
+heatmap.2(zz3, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue", labRow = FALSE, labCol = FALSE, main="TFEb to TFB ratio")
+
+
+#Spt4/5 Pr to Elf1 Pr ratio
+zz<-list()
+for (q in 3:20) {
+  SW<-calcDeltG(width=q)
+  row.names(SW)<-TSSbed$V4
+  SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id")
+  z<-list()
+  for (x in 2:71) {
+    y<-suppressWarnings(cor.test((SWEI$elf1_r1_promoter/SWEI$spt45_r1_promoter + SWEI$elf1_r2_promoter/SWEI$spt45_r2_promoter), SWEI[,x], method="spearman"))
+    z[x]<-y$estimate
+  }
+  z2<-do.call(rbind, z)
+  z2<-data.frame(z2)
+  zz[q]<-z2
+  
+}
+zz2<-do.call(cbind,zz)
+zz2<-data.frame(zz2)
+zz2$pos<- c((-50):(-1), 1:20)
+zz3<-as.matrix(zz2[1:(ncol(zz2)-1)], ncol=17)
+breaks.cor<-seq(-1,1, by=0.05)
+heatmap.2(zz3, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue", labRow = FALSE, labCol = FALSE, main="Elf1 Pr to Spt4/5 Pr ratio")
+
+#Spt4/5 Pr to RNAP Pr ratio
+zz<-list()
+for (q in 3:20) {
+  SW<-calcDeltG(width=q)
+  row.names(SW)<-TSSbed$V4
+  SWEI <-merge(SW, data, by.x="row.names", by.y="operon_id")
+  z<-list()
+  for (x in 2:71) {
+    y<-suppressWarnings(cor.test((SWEI$spt45_r1_promoter/SWEI$RNAP1_promoter + SWEI$spt45_r2_promoter/SWEI$RNAP2_promoter), SWEI[,x], method="spearman"))
+    z[x]<-y$estimate
+  }
+  z2<-do.call(rbind, z)
+  z2<-data.frame(z2)
+  zz[q]<-z2
+  
+}
+zz2<-do.call(cbind,zz)
+zz2<-data.frame(zz2)
+zz2$pos<- c((-50):(-1), 1:20)
+zz3<-as.matrix(zz2[1:(ncol(zz2)-1)], ncol=17)
+breaks.cor<-seq(-1,1, by=0.05)
+heatmap.2(zz3, breaks=breaks.cor, Rowv=F, Colv=F, trace="none", dendrogram="none", key=T, col="redblue", labRow = FALSE, labCol = FALSE, main="Spt4/5 Pr to RNAP Pr ratio")
+```
+
+
+
+
+calculate and plot cor EIs to deltaG spearman correlation, 95% CI, and bootstrapped correlation difference
+```{r heatmap_escape}
+width = 7
+SW<-calcDeltG(width=width)
+dataMergedCor<- merge(SW, data, by.x="row.names", by.y="operon_id", sort=F)
+n <- nrow(dataMergedCor)
+
+#make data frame for plotting, positions -15 to 50
+meanSW<-apply(SW, 2, mean)
+sdSW<-apply(SW, 2, sd)
+SWdf<-data.frame(pos= -14:50, 
+                 mean = meanSW[(37 - width%/%2):(101-width%/%2)], 
+                 sd = sdSW[(37 - width%/%2):(101-width%/%2)])
+
+
+# bootstrap correlation
+sDataF <- data.frame()
+rDataF <- data.frame()
+eDataF <- data.frame()
+for (j in 1:1000) {
+bt<-sample(1:n, size=n, replace=T)
+dataMergedCorBt<-dataMergedCor[bt,]
+sData<-vector()
+rData<-vector()
+eData<-vector()
+for(i in 2:101) {
+  s<-cor(dataMergedCorBt[,i], dataMergedCorBt$EI_Spt45mean, method="spearman")
+  r<-cor(dataMergedCorBt[,i], dataMergedCorBt$EI_RNAPmean, method="spearman")
+  e<-cor(dataMergedCorBt[,i], dataMergedCorBt$EI_Elf1mean, method="spearman")
+  sData<- c(sData, s)
+  rData<- c(rData, r)
+  eData<- c(eData, e)
+}
+sDataF <- rbind(sDataF, sData)
+rDataF <- rbind(rDataF, rData)
+eDataF <- rbind(eDataF, eData) 
+}
+UpperS <- apply(sDataF, 2, quantile, probs = 0.975)
+LowerS <- apply(sDataF, 2, quantile, probs = 0.025)
+UpperR <- apply(rDataF, 2, quantile, probs = 0.975)
+LowerR <- apply(rDataF, 2, quantile, probs = 0.025)
+UpperE <- apply(eDataF, 2, quantile, probs = 0.975)
+LowerE <- apply(eDataF, 2, quantile, probs = 0.025)
+
+
+#calculating spearman correlation for data set positions -15 to 50
+sData <-vector()
+rData <-vector()
+eData <-vector()
+pvalS <-vector()
+pvalR <-vector()
+pvalE <-vector()
+
+#column1 in dataMergeCor are the row.names, column 37 thus corresponds to position -15
+# correct start so that it presents rather the center of the window: by adding width%/%2
+for(i in (37 - width%/%2):(101-width%/%2)) {
+  s<-suppressWarnings(cor.test(dataMergedCor[,i], dataMergedCor$EI_Spt45mean, method="spearman"))
+  r<-suppressWarnings(cor.test(dataMergedCor[,i], dataMergedCor$EI_RNAPmean, method="spearman"))
+  e<-suppressWarnings(cor.test(dataMergedCor[,i], dataMergedCor$EI_Elf1mean, method="spearman"))
+  sData <- c(sData, s$estimate)
+  rData <- c(rData, r$estimate)
+  eData <- c(eData, e$estimate)
+  pvalS <- c(pvalS, s$p.value)
+  pvalR <- c(pvalR, r$p.value)
+  pvalE <- c(pvalE, e$p.value)
+}
+padjS <- p.adjust(pvalS, method="bonferroni")
+padjR <- p.adjust(pvalR, method="bonferroni")
+padjE <- p.adjust(pvalE, method="bonferroni")
+
+#create data frame with RNAP and Spt4/5 correlations plus 95% CI
+SR<-data.frame(pos= -14:50, RNAP=rData, UpperR = UpperR[(36-width%/%2):(100-width%/%2)],
+               LowerR = LowerR[(36-width%/%2):(100-width%/%2)], pvalR = pvalR, padjR = padjR, 
+               Spt45 = sData, UpperS = UpperS[(36-width%/%2):(100-width%/%2)], 
+               LowerS = LowerS[(36-width%/%2):(100-width%/%2)], pvalS = pvalS, padjS = padjS, 
+               Elf1=eData, UpperE = UpperE[(36-width%/%2):(100-width%/%2)], 
+               LowerE = LowerE[(36-width%/%2):(100-width%/%2)],  pvalE = pvalE, padjE = padjE)
+rownames(SR)<-1:nrow(SR)
+require(reshape2)
+SRmelt<-reshape2::melt(SR[,c(1,2,7,12)], 1)
+colnames(SRmelt)<-c("pos", "ratio", "SpearmanR")
+hm <- ggplot(data=SRmelt, aes(x=pos, y=ratio)) + geom_raster(aes(fill=SpearmanR), interpolate = F) + 
+   scale_fill_continuous_diverging("Vik", limits=c(-1,1), rev=T) + theme_void()
+hm  
+ggplot2::ggsave("heatmap.DNAstabVsEI.mergedRepl.H2O2.pdf", plot = hm, device = "pdf", path = NULL,
+       scale = 1, width = 90, height = 12, units = c("mm"), limitsize = TRUE)
+
+```
+
+```{r seaborn plots}
+require(reticulate)
+use_python('~/miniconda3/bin/python3.7')
+
+#importing required Python libraries/modules
+sns <- import('seaborn')
+plt <- import('matplotlib.pyplot')
+pd <- import('pandas')
+
+#filter columns with correlation and flip to mirror stability rather than deltaG
+SRm<-SR[,c(2,7,12)] * -1
+#building a heatmap using seaborn 
+#r_to_py() converts R object into a python 
+sns$heatmap(r_to_py(SRm), fmt="g", cmap ="RdBu_r", center=0, vmin=-1, vmax=1)
+#save the plot
+plt$savefig("heatmap.InrStab.EI.h2o2.pdf")
+#display the plot
+plt$show()
+```
+
+
+```{r heatmap_TECprogress}
+#heatmap for elf1 to spt4/5 ratio
+width = 7
+SW<-calcDeltG(width=width)
+dataMergedCor<- merge(SW, data, by.x="row.names", by.y="operon_id", sort=F)
+n <- nrow(dataMergedCor)
+
+
+# bootstrap correlation
+eDataF <- data.frame()
+sDataF <- data.frame()
+cDataF <- data.frame()
+
+for (j in 1:1000) {
+bt<-sample(1:n, size=n, replace=T)
+dataMergedCorBt<-dataMergedCor[bt,]
+sData<-vector()
+eData<-vector()
+cData<-vector()
+for(i in 2:101) {
+  e<-cor(dataMergedCorBt[,i], dataMergedCorBt$elf1_r1_promoter/dataMergedCorBt$spt45_r1_promoter + dataMergedCorBt$elf1_r2_promoter/dataMergedCorBt$spt45_r2_promoter, method="spearman")
+  s<-cor(dataMergedCorBt[,i], dataMergedCorBt$spt45_r1_promoter/dataMergedCorBt$RNAP1_promoter + dataMergedCorBt$spt45_r2_promoter/dataMergedCorBt$RNAP2_promoter, method="spearman")
+  c<-cor(dataMergedCorBt[,i], dataMergedCorBt$cpsf1_r1_promoter/dataMergedCorBt$elf1_r1_promoter + dataMergedCorBt$cpsf1_r2_promoter/dataMergedCorBt$cpsf1_r2_promoter, method="spearman")
+  sData<- c(sData, s)
+  eData<- c(eData, e)
+  cData<- c(cData, c)
+}
+sDataF <- rbind(sDataF, sData)
+eDataF <- rbind(eDataF, eData) 
+cDataF <- rbind(cDataF, cData) 
+}
+UpperS <- apply(sDataF, 2, quantile, probs = 0.975)
+LowerS <- apply(sDataF, 2, quantile, probs = 0.025)
+UpperE <- apply(eDataF, 2, quantile, probs = 0.975)
+LowerE <- apply(eDataF, 2, quantile, probs = 0.025)
+UpperC <- apply(cDataF, 2, quantile, probs = 0.975)
+LowerC <- apply(cDataF, 2, quantile, probs = 0.025)
+
+#calculating spearman correlation for data set positions -15 to 50
+sData <-vector()
+eData <-vector()
+cData <-vector()
+pvalS <-vector()
+pvalE <-vector()
+pvalC <-vector()
+
+#column1 in dataMergeCor are the row.names, column 37 thus corresponds to position -15
+# correct start so that it presents rather the center of the window: by adding width%/%2
+for(i in (37 - width%/%2):(101-width%/%2)) {
+  s<-suppressWarnings(cor.test(dataMergedCor[,i], dataMergedCor$spt45_r1_promoter/dataMergedCor$RNAP1_promoter + dataMergedCor$spt45_r2_promoter/dataMergedCor$RNAP2_promoter, method="spearman"))
+  e<-suppressWarnings(cor.test(dataMergedCor[,i], dataMergedCor$elf1_r1_promoter/dataMergedCor$spt45_r1_promoter + dataMergedCor$elf1_r2_promoter/dataMergedCor$spt45_r2_promoter, method="spearman"))
+  c<-suppressWarnings(cor.test(dataMergedCor[,i], dataMergedCor$cpsf1_r1_promoter/dataMergedCor$elf1_r1_promoter + dataMergedCor$cpsf1_r2_promoter/dataMergedCor$elf1_r2_promoter, method="spearman"))
+  sData <- c(sData, s$estimate)
+  eData <- c(eData, e$estimate)
+  cData <- c(cData, c$estimate)
+  pvalS <- c(pvalS, s$p.value)
+  pvalE <- c(pvalE, e$p.value)
+  pvalC <- c(pvalC, c$p.value)
+}
+padjS <- p.adjust(pvalS, method="bonferroni")
+padjE <- p.adjust(pvalE, method="bonferroni")
+padjC <- p.adjust(pvalC, method="bonferroni")
+
+#create data frame with RNAP and Spt4/5 correlations plus 95% CI
+TP<-data.frame(pos= -14:50, 
+               Spt45toRNAP = sData, UpperS = UpperS[(36-width%/%2):(100-width%/%2)], 
+               LowerS = LowerS[(36-width%/%2):(100-width%/%2)], pvalS = pvalS, padjS = padjS,
+               Elf1toSpt45 = eData, UpperE = UpperE[(36-width%/%2):(100-width%/%2)],
+               LowerE = LowerE[(36-width%/%2):(100-width%/%2)],  pvalE = pvalE, padjE = padjE,
+               CPSF1toElf1 = cData, UpperC = UpperC[(36-width%/%2):(100-width%/%2)],
+               LowerC = LowerC[(36-width%/%2):(100-width%/%2)],  pvalC = pvalC, padjC = padjC)
+rownames(TP)<-1:nrow(TP)
+breaks.cor<-seq(-1,1, by=0.04)
+
+
+require(reshape2)
+TPmelt<-melt(TP[,c(1,2,7,12)], 1)
+colnames(TPmelt)<-c("pos", "ratio", "SpearmanR")
+hm <- ggplot(data=TPmelt, aes(x=pos, y=ratio)) + geom_raster(aes(fill=SpearmanR), interpolate = F) + 
+   scale_fill_continuous_diverging("Vik", limits=c(-1,1), rev=T) + theme_void()
+hm  
+ggplot2::ggsave("heatmap.DNAstabVsTECprogress.mergedRepl.H2O2.pdf", plot = hm, device = "pdf", path = NULL,
+       scale = 1, width = 90, height = 12, units = c("mm"), limitsize = TRUE)
+
+write.table(TPmelt, "DNAhybrid.vs.TECprogress.h2o2.txt", col.names = T, row.names = F, quote=F)
+#if dev.off fails, try: while (!is.null(dev.list()))  dev.off()
+#try also : dev.set(dev.next())
+```
+
+```{r seaborn plots2}
+#filter columns with correlation and flip to mirror stability rather than deltaG
+TPm<-TP[,c(2,7,12)] * -1
+#building a heatmap using seaborn 
+#r_to_py() converts R object into a python 
+sns$heatmap(r_to_py(TPm), fmt="g", cmap ="RdBu_r", center=0, vmin=-1, vmax=1)
+#save the plot
+plt$savefig("heatmap.InrStab.ratios.h2o2.pdf")
+#display the plot
+plt$show()
+```
+
+
+```{r deltaG comparison}
+deltaG.expon<-c(-0.2418851645,  1.0523798355,  0.8347448355,  1.6554248355,  0.7248998355, -1.4127051645,  1.0679598355, -0.0001701645, -0.6195051645, -0.4229051645,  1.8645598355,  2.2157648355,  0.6506798355,  2.3998298355, -0.9384851645, -1.2896901645, -0.6496751645, 2.4632148355, -0.6195051645,  2.2744048355, -0.0001701645,  0.8598148355,  0.5316998355,  0.2835398355, -1.0052701645,  1.9205098355, 1.1520248355,  2.1950848355, -0.0798451645,  2.3933848355,  1.1347448355,  0.3076198355,  0.9154098355, -0.5910351645, -0.9832451645, 0.9727048355, -1.1828901645,  1.4930298355,  2.8855948355,  0.1774498355,  0.6222098355,  0.3503248355,  0.1404798355,  1.6791498355, 2.0662598355, 0.7045748355,  0.3235548355, -0.0940801645, 1.8188098355,  2.0076198355,  1.2123648355,  2.2506798355,  0.5313448355, 1.5252548355, 2.0377898355,  3.5045748355,  1.9713598355, -0.5802001645,  1.4903398355,  0.8235548355,  1.1821948355, -2.1323951645, 0.4598148355, -0.0798451645,  0.0042198355,  3.1537248355,  1.3520248355, -0.1388401645,  2.2632148355,  3.1140648355,  0.4611598355 , 1.4808498355, 0.5744048355,  1.3076198355,  0.2947298355,  2.3567698355,  1.6984848355, -1.3367851645,  2.1916848355,  0.3343898355 , 1.9265998355, 2.0438798355,  1.3011748355,  2.6218548355, -0.1066151645,  1.5106648355,  2.3330448355,  2.0377898355,  0.7330448355, 1.4425348355, -0.0161051645, 1.9554248355,  0.9154098355,  0.1967848355,  1.6710048355,  0.8072648355,  1.4537248355, 1.6554248355,  0.7761048355, 1.1347448355,  1.5727048355,  2.3459348355,  0.9059198355, -0.0591651645, -0.1734001645,  1.2279448355,  1.5710048355 , 0.3313448355,  2.4950848355,  1.6981298355,  0.5059198355, -1.2181601645,  1.5808498355,  4.4316998355,  1.0360898355,  3.1774498355, -0.0988251645, 0.1774498355,  2.5235548355,  3.0472798355,  0.7964298355,  2.1282998355,  2.0110198355,  0.7886398355,  0.5787948355, -0.2717001645, -1.4954251645,  1.5252548355,  1.9360898355,  2.4632148355,  0.6157648355,  1.2455798355, -0.8083151645,  1.0235548355 , 0.7154098355, 0.5787948355,  2.6171098355,  2.4282998355,  1.7744048355,  1.2804948355)
+
+deltaG.h2o2<-dataMergedCor[,45]
+D <- ks.test(deltaG.h2o2, deltaG.expon)$statistic
+D_critP0.05<- 1.36*sqrt(1/length(deltaG.h2o2) + 1/length(deltaG.expon))
+#test significance:
+D < D_critP0.05
+
+par(mfrow=c(1,2))
+hist(deltaG.h2o2, breaks=25, main="deltaGinr H2O2")
+hist(deltaG.expon, breaks=25, main="deltaGinr expon")
+```
+
+#calculating GC content for -3 to +4 window
+```{r GC_content}
+GC_cont <- vector()
+for(i in 1:length(input)){
+  x <- seqinr::count(input[[i]][48:54], wordsize = 1)
+  GC_cont[i] <- (sum(x[2:3])/7)
+}
+summary(GC_cont)
+```
+
+
+
+
+#Comparison to TATA-box distance and scoring
+```{r TATA-box1}
+#creating bed file with x to y positions for mapped TSSs
+x = -42
+y = -19
+
+TSSslop<-TSSbed
+for(i in 1:nrow(TSSslop)){
+if(TSSslop$V6[i] == "+") {TSSslop$V3[i] <- TSSbed$V3[i] +y
+                          TSSslop$V2[i] <- TSSbed$V2[i] +x}
+else {TSSslop$V3[i] <- TSSbed$V3[i] -x
+      TSSslop$V2[i] <- TSSbed$V2[i] -y}
+}
+write.table(TSSslop, "temp/TSSslop.bed", quote=F, row.names=F, col.names=F, sep="\t")
+```
+
+```{bash TATA-box2}
+export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
+if [ -d temp/MEME ]; then rm -Rf temp/MEME; fi
+bedtools getfasta -s -nameOnly -fi $genomeFasta -bed temp/TSSslop.bed -fo temp/TSS.mapped.fasta
+
+meme temp/TSS.mapped.fasta -o temp/MEME -dna -minw 8 -maxw 15 -nmotifs 1 -mod oops -bfile $genomeBckgr
+```
+
+
+```{r TATA-box3}
+#importing meme data with position and pvalue of individual motif occurences
+meme<-read_meme("temp/MEME/meme.txt",  readsites = T, readsites.meta = T)[[3]]
+#remove strand information from Sequence
+meme$operon_ID <- gsub('.{3}$', '', meme$Sequence)
+
+#match order
+meme<-meme[match(TSSbed$V4, meme$operon_ID),]
+
+cor.test(dataMergedCor$TFB1_foldR1, meme$Pvalue, method="s")
+```
+
+```{r preparing_heatmap_data}
+#filter columns with correlation and flip to mirror stability rather than deltaG
+TATA.frame <- data.frame(operon_id = dataMergedCor$Row.names,
+                         TATAscore = -1*meme$Pvalue,
+                         TATAcenter.distance = 43 - meme$Position -9, #position1 refers to pos42, in motif the TATA-box covers positions 7 to 14, therefore adding 9 nt correction to indicate center position of TATA-box 
+                         TSS.DNAdupl.stabl = -1*(rowSums(dinucG[,48:53]) - 0.114*(6)*log(salt)),
+                         TFB = sqrt(dataMergedCor$TFB1_foldR1*dataMergedCor$TFB1_foldR2),
+                         EI_RNAP = dataMergedCor$EI_RNAPmean,
+                         EI_Spt45 = dataMergedCor$EI_Spt45mean,
+                         EI_Elf1 = dataMergedCor$EI_Elf1mean)
+                         
+TATA.cor <- cor(TATA.frame[,2:8], method="s")
+```
+
+```{r seaborn plots3}
+TATA.cor<-TATA.cor[1:3,4:7]
+
+#building a heatmap using seaborn 
+#r_to_py() converts R object into a python 
+sns$heatmap(r_to_py(TATA.cor), fmt="g", cmap ="RdBu_r", center=0, vmin=-1, vmax=1)
+#save the plot
+plt$savefig("heatmap.TATAscore.ratios.h2o2.pdf")
+#display the plot
+plt$show()
+```
