@@ -28,7 +28,7 @@ TUs$operon_ID<-paste0("ID_", TUs$operon_ID)
 
 genomeFasta <- "genome_data/NC_002754.fna"
 genomeSizes <- "genome_data/NC_002754.sizes"
-
+genomeBckgr <- "genome_data/Sso_background_MEME.prn"
 
 phase <- "expon"
 
@@ -59,7 +59,7 @@ theme_set(theme_bw(base_size = 8))
 
 folder<-paste0("../plots.expon.", Sys.Date())
   
-Sys.setenv(phase = phase, TSS = TSS, TSS500 = TSS500, mappedTSS = mappedTSS, nrows = nrows,nrows500 = nrows500, RNAP1 = RNAP1, RNAP2 = RNAP2, cpsf1_r1 = cpsf1_r1, cpsf1_r2 = cpsf1_r2, spt45_r1 = spt45_r1, spt45_r2 = spt45_r2, elf1_r1 = elf1_r1, elf1_r2 = elf1_r2,TFB_peaks = TFB_peaks, TFEb_peaks = TFEb_peaks, folder = folder, genomeFasta = genomeFasta, genomeSizes =genomeSizes)
+Sys.setenv(phase = phase, TSS = TSS, TSS500 = TSS500, mappedTSS = mappedTSS, nrows = nrows,nrows500 = nrows500, RNAP1 = RNAP1, RNAP2 = RNAP2, cpsf1_r1 = cpsf1_r1, cpsf1_r2 = cpsf1_r2, spt45_r1 = spt45_r1, spt45_r2 = spt45_r2, elf1_r1 = elf1_r1, elf1_r2 = elf1_r2,TFB_peaks = TFB_peaks, TFEb_peaks = TFEb_peaks, folder = folder, genomeFasta = genomeFasta, genomeSizes =genomeSizes, genomeBckgr = genomeBckg)
 ```
 
 
@@ -260,7 +260,7 @@ export PATH=$PATH:/Users/fabianblombach/miniconda3/bin
 if [ -d temp/MEME ]; then rm -Rf temp/MEME; fi
 bedtools getfasta -s -nameOnly -fi $genomeFasta -bed temp/TSSslop.bed -fo temp/TSS.mapped.fasta
 
-meme temp/TSS.mapped.fasta -o temp/MEME -dna -minw 8 -maxw 15 -nmotifs 1 -mod oops -bfile ~/HTS/MEME/background_models/Sso_background_model.prn
+meme temp/TSS.mapped.fasta -o temp/MEME -dna -minw 8 -maxw 15 -nmotifs 1 -mod oops -bfile $genomeBckgr
 ```
 
 
